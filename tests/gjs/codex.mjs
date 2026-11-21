@@ -1,0 +1,88 @@
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+import {RpcClient} from '../../build/codex/rpc.js';
+import {CodexController} from '../../build/codex/controller.js';
+function assert(v,m){if(!v)throw new Error(m);}
+const exe=GLib.build_filenamev([GLib.get_current_dir(),'tests/fixtures/fake-codex.mjs']);
+const run=async()=>{
+ const client=new RpcClient(exe,500);
+ const result=await client.request('account/rateLimits/read',{excludeResetCreditDetails:true});
+ assert(result.rateLimits.primary.usedPercent===25,'real pipe response');
+ let denied=false;try{await client.request('turn/start',{});}catch{denied=true;}
+ assert(denied,'model method denied');
+ const pid=client.pid; client.stop();
+ await new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,50,()=>{resolve();return GLib.SOURCE_REMOVE;}));
+ assert(!Gio.File.new_for_path('/proc/'+pid).query_exists(null),'owned child exits');
+ const scratch=GLib.dir_make_tmp('usagescope-executable-XXXXXX');
+ const unsafe=Gio.File.new_for_path(scratch).get_child('writable');unsafe.make_directory(null);
+ unsafe.set_attribute_uint32('unix::mode',0o777,Gio.FileQueryInfoFlags.NONE,null);
+ const link=unsafe.get_child('codex');link.make_symbolic_link(exe,null);
+ let unsafeAccepted=false;
+ try{const p=new RpcClient(link.get_path(),300);unsafeAccepted=true;p.stop();}catch{}
+ link.delete(null);unsafe.delete(null);Gio.File.new_for_path(scratch).delete(null);
+ assert(!unsafeAccepted,'reject executable through writable ancestor even if target is safe');
+ for(const mode of ['hang','oversize','malformed']) {
+  GLib.setenv('USAGESCOPE_TEST_MODE',mode,true);
+  const rpc=new RpcClient(exe,150);let failed=false;
+  try{await rpc.request('account/read',{});}catch{failed=true;}finally{rpc.stop();}
+  assert(failed,'reject '+mode);
+ }
+ GLib.unsetenv('USAGESCOPE_TEST_MODE');
+ let latest=null;let opened=0;
+ const pidDir=GLib.dir_make_tmp('usagescope-idle-XXXXXX');
+ GLib.setenv('USAGESCOPE_TEST_PID',pidDir+'/pid',true);
+ const c=new CodexController({executable:exe,pollSeconds:180,publish:v=>latest=v,openUri:()=>opened++});
+ c.start();await c.refresh();assert(latest?.snapshot?.windows[0]?.usedPercent===25,'controller publishes normalized usage');
+ const [,pidBytes]=Gio.File.new_for_path(pidDir+'/pid').load_contents(null);
+ const idlePid=new TextDecoder().decode(pidBytes);
+ await new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,50,()=>{resolve();return GLib.SOURCE_REMOVE;}));
+ assert(!Gio.File.new_for_path('/proc/'+idlePid).query_exists(null),'quota-only controller releases its process between polls');
+ await c.refresh();assert(latest.status==='ready','next explicit read reconnects after idle release');
+ GLib.unsetenv('USAGESCOPE_TEST_PID');Gio.File.new_for_path(pidDir+'/pid').delete(null);Gio.File.new_for_path(pidDir).delete(null);
+ const received=latest.snapshot.receivedAt;
+ c.stop();assert(latest.status==='disabled','disabled published');
+ await c.refresh();assert(latest.status==='disabled','stopped controller never revives');
+ GLib.setenv('USAGESCOPE_TEST_MODE','evil-url',true);
+ const bad=new CodexController({executable:exe,pollSeconds:180,publish:v=>latest=v,openUri:()=>opened++});
+ bad.start();await bad.connect();assert(opened===0,'untrusted login not opened');bad.stop();
+ GLib.unsetenv('USAGESCOPE_TEST_MODE');
+ GLib.setenv('USAGESCOPE_TEST_MODE','delayed-login',true);
+ const delayed=new CodexController({executable:exe,pollSeconds:180,publish:v=>latest=v,openUri:()=>opened++});
+ delayed.start();await delayed.refresh();
+ const login=delayed.connect();
+ await new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,30,()=>{resolve();return GLib.SOURCE_REMOVE;}));
+ await delayed.cancelLogin();await login;
+ assert(opened===0,'canceled pending login never opens browser');delayed.stop();
+ GLib.unsetenv('USAGESCOPE_TEST_MODE');
+ GLib.setenv('USAGESCOPE_TEST_MODE','switch-account',true);
+ const seen=[];
+ const switched=new CodexController({executable:exe,pollSeconds:180,publish:v=>{if(v.snapshot)seen.push(v.snapshot.accountId);},openUri:()=>{}});
+ switched.start();await switched.refresh();
+ await new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,100,()=>{resolve();return GLib.SOURCE_REMOVE;}));
+ switched.stop();
+ assert(!seen.includes('fake-account'),'account change invalidates outstanding old response');
+ assert(seen.includes('new-account'),'account change schedules one new read');
+ GLib.unsetenv('USAGESCOPE_TEST_MODE');
+ const loginClock=new CodexController({executable:exe,pollSeconds:180,publish:v=>latest=v,openUri:()=>{}});
+ loginClock.start();await loginClock.refresh();
+ const oldSource=GLib.MainContext.default().find_source_by_id(loginClock.timer);
+ await loginClock.connect();const paused=oldSource.is_destroyed();
+ await loginClock.cancelLogin();const resumed=loginClock.timer!==0;
+ loginClock.stop();
+ assert(paused,'login removes previously scheduled poll');assert(resumed,'cancel rearms polling');
+ GLib.setenv('USAGESCOPE_TEST_MODE','failed-login',true);
+ const failedDir=GLib.dir_make_tmp('usagescope-failed-login-XXXXXX');GLib.setenv('USAGESCOPE_TEST_PID',failedDir+'/pid',true);
+ const failed=new CodexController({executable:exe,pollSeconds:180,publish:v=>latest=v,openUri:()=>{}});
+ failed.start();await failed.refresh();await failed.connect();
+ await new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,150,()=>{resolve();return GLib.SOURCE_REMOVE;}));
+ const [,failedBytes]=Gio.File.new_for_path(failedDir+'/pid').load_contents(null);
+ const failedPid=new TextDecoder().decode(failedBytes);
+ const leaked=Gio.File.new_for_path('/proc/'+failedPid).query_exists(null);
+ failed.stop();Gio.File.new_for_path(failedDir+'/pid').delete(null);Gio.File.new_for_path(failedDir).delete(null);
+ GLib.unsetenv('USAGESCOPE_TEST_PID');GLib.unsetenv('USAGESCOPE_TEST_MODE');
+ assert(!leaked,'failed login releases callback process');
+ print('Codex GJS integration passed: pipes, model deny, timeout, bounds, malformed, shutdown, URL validation');
+};
+const loop=new GLib.MainLoop(null,false);let error=null;
+run().catch(e=>{error=e;printerr(e.stack??e.message);}).finally(()=>loop.quit());
+loop.run();if(error)throw error;

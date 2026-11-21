@@ -6,10 +6,12 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs src/ui/*.test.mjs",
     "test:gjs": "npm run build && node scripts/test-gjs.mjs",
     "check": "npm test && npm run test:gjs",
-    "pack": "npm run build && node scripts/package.mjs"
+    "pack": "npm run build && node scripts/package.mjs",
+    "test:shell": "npm run pack && node scripts/smoke-shell.mjs",
+    "install:extension": "npm run pack && node scripts/install.mjs"
   },
   "devDependencies": {
     "typescript": "7.0.2",

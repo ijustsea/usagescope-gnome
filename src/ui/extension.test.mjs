@@ -1,0 +1,139 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {test} from 'node:test';
+import {stripTypeScriptTypes} from 'node:module';
+import {nextUiDeadline} from './model.ts';
+
+// Exercise the extension's actual orchestration. Only Shell actors, settings and
+// provider I/O are replaced; the isolated Shell smoke covers real actor teardown.
+const emitted = stripTypeScriptTypes(readFileSync(new URL('../extension.ts', import.meta.url), 'utf8'))
+    .replace(/^import .*;$/gm, '').replace('export default class', 'return class');
+const tick = () => new Promise(resolve => setImmediate(resolve));
+function harness() {
+    const h = {timers: new Set(), codex: [], claude: [], launches: [], sourceIds: ['a'.repeat(64), 'b'.repeat(64)]};
+    const values = {'enable-codex': false, 'enable-claude': false, 'codex-path': '', 'poll-seconds': 180};
+    const settings = {
+        connect(_signal, callback) {this.changed = callback; return 1;},
+        disconnect() {this.changed = null;},
+        get_boolean: key => values[key], get_string: key => values[key], get_int: key => values[key],
+        set_boolean(key, value) {values[key] = value; this.changed?.(this, key);},
+        set_string(key, value) {values[key] = value; this.changed?.(this, key);},
+        set_int(key, value) {values[key] = value; this.changed?.(this, key);},
+    };
+    class Base {uuid = 'test@local'; path = '/tmp/test-extension'; getSettings() {return settings;}}
+    class Indicator {
+        button = {};
+        constructor(actions) {h.actions = actions; h.indicator = this;}
+        update(views, enabled, busy, login) {h.state = JSON.parse(JSON.stringify({views, enabled, busy, login}));}
+        setSettings() {}
+        setSources(ids, selected) {h.sources = {ids, selected};}
+        destroy() {h.destroyed = true;}
+    }
+    class Codex {
+        constructor(options) {this.options = options; h.codex.push(this);}
+        start() {this.options.publish({status: 'ready', snapshot: null, message: ''});}
+        async refresh() {}
+        async connect() {
+            this.options.publish({status: 'loading', snapshot: null, message: ''});
+            await new Promise(resolve => {this.complete = resolve;});
+            this.loginActive = true;
+            this.options.openUri('https://auth.openai.com/');
+            this.options.publish({status: 'loading', snapshot: null, message: 'Complete sign-in'});
+        }
+        async cancelLogin() {this.loginActive = false;}
+        stop() {this.stopped = true;}
+    }
+    class Claude {
+        constructor(options) {this.options = options; h.claude.push(this);}
+        start() {this.options.publish({status: 'waiting', snapshot: null, message: 'Select a source'});}
+        async refresh() {}
+        async selectSource(id) {this.selected = id;}
+        listSources() {return h.sourceIds;}
+        stop() {this.stopped = true;}
+    }
+    class Cancellable {cancel() {this.canceled = true;} is_cancelled() {return !!this.canceled;}}
+    class Alerts {clear() {} observe() {return [];}}
+    const GLib = {PRIORITY_DEFAULT: 0, SOURCE_REMOVE: false, SOURCE_CONTINUE: true,
+        FileTest: {IS_REGULAR: 1}, find_program_in_path: () => '/fake/codex', file_test: () => true,
+        timeout_add() {h.timers.add(1); return 1;}, Source: {remove(id) {h.timers.delete(id);}}};
+    const Gio = {Cancellable, AppInfo: {
+        launch_default_for_uri_async(uri) {h.launches.push(uri);}, launch_default_for_uri_finish() {},
+    }};
+    const Main = {panel: {addToStatusArea() {}}, messageTray: {add() {}}};
+    const Extension = new Function('Gio', 'GLib', 'Extension', 'Main', 'MessageTray', 'CodexController',
+        'ClaudeController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', emitted)(
+        Gio, GLib, Base, Main, {}, Codex, Claude, Indicator, Alerts, nextUiDeadline, value => value);
+    h.extension = new Extension();
+    h.extension.enable();
+    return h;
+}
+
+test('defaults acquire nothing; disable synchronously removes owned UI and timer', () => {
+    const h = harness();
+    assert.equal(h.codex.length, 0);
+    assert.equal(h.claude.length, 0);
+    assert.equal(h.launches.length, 0);
+    assert.equal(h.timers.size, 0);
+    h.actions.setEnabled('codex', true);
+    h.actions.setEnabled('claude', true);
+    assert.equal(h.codex.length, 1);
+    assert.equal(h.claude.length, 1);
+    assert.equal(h.launches.length, 0);
+    h.actions.menuStateChanged(true);
+    assert.equal(h.timers.size, 1);
+    h.actions.menuStateChanged(false);
+    assert.equal(h.timers.size, 0);
+    h.extension.disable();
+    assert.equal(h.codex[0].stopped, true);
+    assert.equal(h.claude[0].stopped, true);
+    assert.equal(h.destroyed, true);
+    assert.equal(h.timers.size, 0);
+    const before = h.state;
+    h.codex[0].options.publish({status: 'error', snapshot: null, message: 'late'});
+    assert.equal(h.state, before);
+});
+
+test('cancel before login-start response prevents browser and cancels the eventual login', async () => {
+    const h = harness();
+    h.actions.setEnabled('codex', true);
+    h.actions.connectCodex();
+    assert.equal(h.state.login, true);
+    h.actions.cancelLogin();
+    h.codex[0].complete();
+    await tick();
+    assert.equal(h.launches.length, 0);
+    assert.equal(h.codex[0].loginActive, false);
+    assert.equal(h.state.login, false);
+    assert.equal(h.state.busy.codex, false);
+    h.extension.disable();
+});
+
+test('Cancel remains available after connect returns from launching the browser', async () => {
+    const h = harness();
+    h.actions.setEnabled('codex', true);
+    h.actions.connectCodex();
+    h.codex[0].complete();
+    await tick();
+    assert.equal(h.launches.length, 1);
+    assert.equal(h.state.login, true);
+    h.actions.cancelLogin();
+    await tick();
+    assert.equal(h.codex[0].loginActive, false);
+    assert.equal(h.state.login, false);
+    h.extension.disable();
+});
+
+test('Claude selection passes the full hash; changing Codex settings preserves Claude', async () => {
+    const h = harness();
+    h.actions.setEnabled('codex', true);
+    h.actions.setEnabled('claude', true);
+    h.actions.selectClaudeSource(h.sourceIds[1]);
+    await tick();
+    assert.equal(h.claude[0].selected, 'b'.repeat(64));
+    h.actions.setPollSeconds(300);
+    assert.equal(h.codex[0].stopped, true);
+    assert.equal(h.codex.length, 2);
+    assert.equal(h.claude.length, 1);
+    assert.equal(h.claude[0].stopped, undefined);
+    h.extension.disable();
+});

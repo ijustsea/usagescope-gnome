@@ -1,0 +1,10 @@
+import {readFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {spawnSync} from 'node:child_process';
+const root=resolve(import.meta.dirname,'..');
+const meta=JSON.parse(await readFile(resolve(root,'metadata.json'),'utf8'));
+if(!/^[a-z0-9-]+@[a-z0-9.-]+$/.test(meta.uuid))throw new Error('Invalid extension UUID');
+const result=spawnSync('gnome-extensions',['install',resolve(root,'dist',meta.uuid+'.shell-extension.zip')],{stdio:'inherit'});
+if(result.error)throw result.error;
+if(result.status!==0)process.exit(result.status??1);
+console.log('Installed only; enable UsageScope explicitly in Extensions. A Wayland session may require logout/login.');
