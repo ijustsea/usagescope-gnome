@@ -1,4 +1,4 @@
-#!/usr/bin/node
+#!/usr/bin/env node
 import readline from 'node:readline';
 import {appendFileSync,writeFileSync} from 'node:fs';
 if(process.env.USAGESCOPE_TEST_PID)writeFileSync(process.env.USAGESCOPE_TEST_PID,String(process.pid),{mode:0o600});

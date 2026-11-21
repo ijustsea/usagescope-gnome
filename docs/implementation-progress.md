@@ -23,6 +23,7 @@ Ruling: original single resident Codex child changed to quota-only transient chi
 - `npm audit --ignore-scripts --audit-level=low`: 0 known vulnerabilities at verification time (development dependencies; not malware certification).
 - Package regression: unexpected JSON/JS injected in build/ is excluded; source manifest includes shared runtime validator, only intended runtime code/assets/schema/license shipped. Rebuilding twice produces identical archive bytes.
 - `git diff --check`: clean before integration.
+- First GitHub CI run passed all 43 Node tests and the Claude GJS check, but exposed a fixture-only fixed /usr/bin/node shebang absent on the hosted runner. The test executable now resolves the explicitly provisioned Node from PATH; runtime product code and executable trust policy are unchanged.
 - Independent review reproduced and closed: stale account response, untrusted executable ancestor, unwanted archive files, null-account alert baseline, interpreter PATH substitution, login cancellation and poll/failed-login process lifecycle gaps.
 
 ## Limits deliberately retained
