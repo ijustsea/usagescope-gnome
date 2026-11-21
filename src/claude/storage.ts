@@ -72,6 +72,7 @@ export async function storeSnapshot(projection: Projection, order: number, recei
     const directory = runtimeDirectory();
     const identity = privateDirectory(directory);
     let temporary: Gio.File | null = null;
+    let committed: Gio.File | null = null;
     try {
         sameFile(identity, privateDirectory(directory));
         const existing = entries(directory);
@@ -88,12 +89,10 @@ export async function storeSnapshot(projection: Projection, order: number, recei
         // Both paths share a private directory; a unique final name is never rewritten.
         const final = directory.get_child(name);
         temporary.move(final, Gio.FileCopyFlags.NOFOLLOW_SYMLINKS, null, null);
+        committed = final;
         temporary = null;
         const after = entries(directory);
-        if (new Set(after.map(entry => entry.sourceId)).size > MAX_SOURCES) {
-            final.delete(null);
-            throw invalid();
-        }
+        if (new Set(after.map(entry => entry.sourceId)).size > MAX_SOURCES) throw invalid();
         const retained = after.filter(entry => entry.sourceId === projection.sourceId)
             .sort((a, b) => b.order - a.order || b.name.localeCompare(a.name));
         for (const entry of retained.slice(2)) {
@@ -103,9 +102,18 @@ export async function storeSnapshot(projection: Projection, order: number, recei
                 old.delete(null);
             } catch (error) { if (!missing(error)) throw error; }
         }
+        sameFile(identity, privateDirectory(directory));
+        committed = null;
+    } catch (error) {
+        // Post-publication inventory or retention may fail under contention.
+        // Withdraw only this invocation's immutable commit, without scanning
+        // an overfull directory or disturbing other sources/caches.
+        if (committed) {
+            sameFile(identity, privateDirectory(directory));
+            try { committed.delete(null); } catch (problem) { if (!missing(problem)) throw problem; }
+        }
+        throw error;
     } finally {
         if (temporary) { try { temporary.delete(null); } catch { /* no raw errors */ } }
-        // Refuse to operate through a replaced directory.
-        sameFile(identity, privateDirectory(directory));
     }
 }

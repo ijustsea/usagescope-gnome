@@ -1,4 +1,6 @@
 export const MAX_FRAME_BYTES=1024*1024;
+export const MAX_CONNECTION_BYTES=4*1024*1024;
+export const MAX_CONNECTION_MESSAGES=256;
 export const MAX_INPUT_BYTES=256*1024;
 export function websiteUrl(provider:unknown):string {
  if(provider==='codex')return 'https://chatgpt.com/auth/login';

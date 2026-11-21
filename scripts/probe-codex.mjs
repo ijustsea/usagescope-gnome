@@ -19,7 +19,7 @@ const start=GLib.get_monotonic_time();
   }catch{/* Process memory accounting may be unavailable. */}
   print(JSON.stringify({ok:true,hasQuota:!!result.rateLimits,hasBuckets:!!result.rateLimitsByLimitId,elapsedMs:Math.round((GLib.get_monotonic_time()-start)/1000),pssKiB}));
  }catch(e){failed=true;printerr('Live probe failed: '+(e.name==='RpcError'?'official CLI request rejected (authentication or eligibility required)':'transport/installation unavailable'));}
- finally{rpc?.stop();loop.quit();}
+ finally{await rpc?.finish();loop.quit();}
 })();
 loop.run();
 if(failed)throw new Error('Read-only live probe did not pass');

@@ -26,7 +26,7 @@ Ruling: original single resident Codex child changed to quota-only transient chi
 - First GitHub CI run passed all 43 Node tests and the Claude GJS check, but exposed a fixture-only fixed /usr/bin/node shebang absent on the hosted runner. The test executable now resolves the explicitly provisioned Node from PATH; runtime product code and executable trust policy are unchanged.
 - Independent review reproduced and closed: stale account response, untrusted executable ancestor, unwanted archive files, null-account alert baseline, interpreter PATH substitution, login cancellation and poll/failed-login process lifecycle gaps.
 
-## Limits deliberately retained
+## Initial implementation limits (later revisions below supersede these)
 
 - Did not install or enable in the user's primary desktop, perform real browser reauthentication, or change the user's Claude configuration/statusline. Full live Claude usage appearance and manual pointer/keyboard interactions are not claimed verified.
 - Same-UID compromise, user-installed malicious CLIs/renderers and vendor endpoint/CLI changes remain trust boundaries.
@@ -45,4 +45,25 @@ User revised the visible UI to compact horizontal remaining-quota bars and subsc
 - Actual final verification:60 Node tests + both GJS suites passed; native GNOME popup opened and inspected at354x365px, including1024x480 display test. Four real bars have correct fraction width, left alignment and blue/orange/red styles; diagnostics are absent from visible cards. A centered-fill regression was reproduced and fixed with FixedLayout. Test-only probes are appended to an isolated extracted COPY, never distributed.
 - Independent review found no remaining material issue in its scope; it reran59 pre-final-status tests and verified both-provider alert wiring, website auth separation and ZIP exclusions. Final status-only regression brings the main suite to60. Main separately performed the native visual/small-monitor checks.
 - npm audit:0 known dependency vulnerabilities. Not a malware-clearance guarantee. Existing user desktop, login and Claude configuration remain untouched.
+
+## Fresh boundary review and recovery hardening — v0.2.1
+
+The user requested a fresh security review plus a combined Korean architecture/technology-choice learning document. The following changes are based on owned temporary fixtures, code inspection and actual execution; no external target was attacked.
+
+- Conditional P1, directory ancestors: a 0700 config under a nonsticky 0777 ancestor was accepted, permitting another user to replace its name and the referenced wrapper. Config/runtime directory validation now checks the entire owner/mode chain, rejects symlinks, and only exempts root-owned sticky shared directories. Independent controlled fixtures reject 0770/0777/user-owned01777 ancestors and accept a safe directory under root-owned sticky `/tmp`.
+- P2, publication contention: near-full concurrent immutable snapshot writes could exceed the inventory limit after commit and strand the directory. The failing invocation now withdraws only its own new commit on postcommit inventory/retention failure. Independent seeded32snapshots+16caches/32writers runs changed from persistent65–78entries to48entries and a successful next normal export (4/4 runs); the committed regression also checks postcommit failure rollback.
+- P2, restore concurrent edits: an explicitly injected check/use interleaving reproduced deletion of a concurrent settings edit when the original file was absent. Restore now captures the inode before validation, publishes originals exclusively, preserves edited settings and the live wrapper on conflict, and retains private `.usagescope-recovery-*` archives (cap16) even on success. Tests cover edits retaining statusLine.command, late writes through held FDs, exact original bytes/mode, repeat apply/restore and full archive refusal. This fixture establishes a correctness race, not an independently observed foreign-user exploit.
+- App Server input bounds: per-frame limits alone did not bound a connection's cumulative input or many small messages. Added4MiB stdout/256message budgets, verified with real GJS pipes carrying small-message floods and multiple valid large frames.
+- Normal Codex completion: replaced immediate termination after successful quota reads with stdin EOF, up to2seconds exit waiting and owned-child fallback termination. Disable/error still detach and terminate immediately. The wait callback now consumes wait_finish and the read loops close their streams. EOF marker, child reaping and uncooperative-child fixtures cover both paths.
+
+### Current verification
+
+- `npm run check`:66/66 Node tests, no failures/skips; both real GJS suites pass under `G_DEBUG=fatal-criticals`. Claude refusal messages during injected conflicts are expected assertions, not failed checks.
+- `USAGESCOPE_TEST_MONITOR=1024x480 npm run test:shell`:PASS; packaged code opened a354x365px real popup, four correctly allocated left-aligned blue/orange/red bars, subscription labels, safe quota RPC and enable/disable/re-enable, no reported extension errors. Separate D-Bus/XDG/headless configuration is not an OS security sandbox.
+- `G_DEBUG=fatal-criticals gjs -m scripts/probe-codex.mjs /home/safe/.local/bin/codex`:PASS; sanitized output only, real official quota request354ms and81,566KiB PSS at one observation. Probe follows the normal EOF completion path. No prompt/thread/turn, browser sign-in or user Claude config changes. Timing/PSS are a single observation, not a benchmark against alternatives or a whole-system energy result.
+- `npm audit --ignore-scripts --audit-level=low`:0 known advisories in app development dependencies. ZIP remains24 allowlisted runtime files; SHA256 `410f9d87e2936da99437d8cec193f1d80661109390f383ae3005a709d325609e`.
+- Independent review used a separate agent context and temporary builds; it reproduced and closed the three Claude findings, reran34Claude tests and the real GJS Claude suite. Additional analysis was interrupted by an automatic security filter; that blocked operation was not retried. Received scoped rechecks and the implementer's direct whole-project checks are reported separately; no full malware clearance or professional security certification is claimed.
+- README/SECURITY now document persistent recovery archives and the distinction between live settings/data and Wayland JavaScript code updates. The supplied diagrams/Markdown/PDF cite implementation commit and official contracts, compare alternatives without unmeasured speed claims, and preserve the user's existing Documents PDFs.
+
+Remaining boundaries: same-UID malicious code, the vendor/compiler/toolchain, late concurrent editor behavior beyond recoverability, passive Claude server freshness, and real user browser login/configuration paths not exercised here. The scoped review has no remaining confirmed material finding; this does not prove absence of vulnerabilities.
 

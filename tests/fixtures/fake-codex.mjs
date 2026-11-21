@@ -4,6 +4,10 @@ import {appendFileSync,writeFileSync} from 'node:fs';
 if(process.env.USAGESCOPE_TEST_PID)writeFileSync(process.env.USAGESCOPE_TEST_PID,String(process.pid),{mode:0o600});
 const mode=process.env.USAGESCOPE_TEST_MODE ?? 'normal';
 const input=readline.createInterface({input:process.stdin});
+input.on('close',()=>{
+ if(process.env.USAGESCOPE_TEST_EOF)writeFileSync(process.env.USAGESCOPE_TEST_EOF,'eof',{mode:0o600});
+ if(mode==='stubborn-eof')setInterval(()=>{},1000);
+});
 let quotaReads=0;
 input.on('line',line=>{
  const r=JSON.parse(line);
@@ -12,6 +16,8 @@ input.on('line',line=>{
  if(mode==='hang' && r.method!=='initialize') return;
  if(mode==='oversize' && r.method!=='initialize') {process.stdout.write('x'.repeat(1048577)); return;}
  if(mode==='malformed' && r.method!=='initialize') {console.log('{oops');return;}
+ if(mode==='notifications-flood' && r.method!=='initialize')for(let i=0;i<1000;i++)console.log(JSON.stringify({method:'test/noop',params:{}}));
+ if(mode==='connection-oversize' && r.method!=='initialize')for(let i=0;i<8;i++)console.log(JSON.stringify({method:'test/noop',params:{padding:'x'.repeat(600000)}}));
  if(['turn/start','thread/start'].includes(r.method)) process.exit(90);
  let result={};
  if(r.method==='initialize') result={userAgent:'test'};

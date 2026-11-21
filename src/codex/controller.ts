@@ -58,7 +58,7 @@ export class CodexController {
    this.state.accept(parseCodexUsage(payload,'codex-local',Date.now()));this.failures=0;this.publish();
    // Quota-only clients need no resident server between polls. Login keeps
    // its callback-owning process alive until completion/cancellation.
-   if(!this.loginPending&&!this.loginId){client.stop();if(this.rpc===client)this.rpc=null;}
+   if(!this.loginPending&&!this.loginId){await client.finish();if(this.rpc===client)this.rpc=null;}
   }catch(e) {
    if(!this.active||generation!==this.generation)return;
    this.rpc?.stop();this.rpc=null;this.failures++;

@@ -25,6 +25,8 @@ Wayland에서 새 코드가 반영되도록 **GNOME 로그아웃 후 다시 로�
 
 오른쪽 위 시스템 메뉴 → 전원 메뉴 → 로그아웃.
 
+**로그아웃 없이 반영되는 것:** 모니터링 설정·조회 간격·새 수신값은 현재 세션에서 갱신됩니다. 이미 로드된 JavaScript 코드를 업데이트할 때는 껐다 켜기만으로 새 모듈을 읽는다고 보장할 수 없습니다. Wayland의 Shell 코드 교체는 위의 로그아웃·로그인 절차를 사용합니다. [GNOME 개발 안내](https://gjs.guide/extensions/development/debugging.html)
+
 ### 3. 다시 로그인한 뒤 켜기
 
 ```bash
@@ -122,8 +124,9 @@ Claude Code의 상태줄이 다음에 실행되고 사용량이 보고되면 카
 gjs -m "${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/usagescope-gnome@ijustsea.github.io/claude/setup.js" --restore
 ```
 
-기존 설정이나 백업이 변경됐다면 복원을 거부합니다. 다른 편집을 덮어쓰지 않도록 변경 내용을 먼저 확인하세요.
-백업에는 원래 설정의 민감값이 포함될 수 있어 사용자 전용 권한으로 보관하며 업로드하지 않습니다.
+기존 설정이나 백업이 변경됐다면 복원을 거부합니다. 복원 중 생긴 편집도 덮어쓰지 않도록 현재 설정을 먼저 비공개 복구 폴더로 옮겨 검증합니다. 충돌 시 편집 내용과 기존 상태줄 실행 경로를 보존합니다.
+
+복원 후에도 Claude 설정 디렉터리의 **`.usagescope-recovery-*`** 폴더에 캡처한 설정을 남깁니다. 성공 시 이전 연결 백업도 그곳에 보관하므로 다시 적용할 수 있습니다. 최대 16개이며 가득 차면 먼저 검토하도록 복원을 거부합니다. 복구 자료를 자동 삭제하지 않습니다. 백업·복구 자료에는 원래 설정의 민감값이 포함될 수 있어 사용자 전용 권한으로 보관하며 업로드하지 않습니다.
 기존 상태줄이 단일 절대 실행 파일이면 출력을 보존합니다. 임의 셸 명령은 자동으로 감싸지 않고 거부합니다.
 
 ## 자주 나오는 오류
@@ -159,6 +162,8 @@ npm --prefix "$HOME/Projects/utility/usagescope-gnome" run test:shell
 구조: `src/core` 검증·상태 → `src/codex`와 `src/claude` 수집 → `src/ui` 표시. 설정은 GSettings, 임시 데이터는 XDG_RUNTIME_DIR을 사용합니다. Codex 프로세스는 조회 후 종료하고 로그인 중에만 유지합니다.
 
 [보안 경계와 한계](SECURITY.md) · [실제 검증 기록](docs/implementation-progress.md)
+
+[구조·동작 원리·기술 선택 학습자료](docs/learning/UsageScope_설계와_기술선택_학습자료.md)
 
 ## 근거
 

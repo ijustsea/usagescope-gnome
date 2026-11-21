@@ -19,10 +19,18 @@ export function missing(error: unknown): boolean {
 export function noSymlinkDirectories(path: string): Gio.File {
     if (!GLib.path_is_absolute(path) || GLib.canonicalize_filename(path, null) !== path) throw invalid();
     let current = Gio.File.new_for_path('/');
-    for (const part of path.split('/').filter(Boolean)) {
-        current = current.get_child(part);
+    const owner = uid();
+    // Check the whole naming chain, including root. A private leaf can still
+    // be renamed/replaced through a parent writable by another user. Root's
+    // sticky shared directories (such as /tmp) protect owned child names.
+    for (const part of ['', ...path.split('/').filter(Boolean)]) {
+        if (part) current = current.get_child(part);
         const info = current.query_info(ATTRIBUTES, NOFOLLOW, null);
         if ((info.has_attribute('standard::is-symlink') && info.get_is_symlink()) || info.get_file_type() !== Gio.FileType.DIRECTORY) throw invalid();
+        const directoryOwner = info.get_attribute_uint32('unix::uid');
+        const mode = info.get_attribute_uint32('unix::mode');
+        if (directoryOwner !== 0 && directoryOwner !== owner) throw invalid();
+        if ((mode & 0o022) !== 0 && !(directoryOwner === 0 && (mode & 0o1000) !== 0)) throw invalid();
     }
     return current;
 }

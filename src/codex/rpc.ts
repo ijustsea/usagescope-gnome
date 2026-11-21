@@ -1,6 +1,6 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import {MAX_FRAME_BYTES, rpcAllowed} from '../core/policy.js';
+import {MAX_FRAME_BYTES, MAX_CONNECTION_BYTES, MAX_CONNECTION_MESSAGES, rpcAllowed} from '../core/policy.js';
 import {trustedExecutable} from '../runtime/executable.js';
 type Pending={resolve:(v:unknown)=>void;reject:(e:Error)=>void;timer:number};
 export class RpcError extends Error {constructor(public code:number,message='Codex request failed'){super(message);}}
@@ -8,6 +8,8 @@ export class RpcClient {
  private process:Gio.Subprocess; private cancel=new Gio.Cancellable(); private pending=new Map<number,Pending>();
  private nextId=1; private closed=false; private ready:Promise<void>|null=null; private writes:Promise<void>=Promise.resolve();
  private chunks:Uint8Array[]=[]; private frameSize=0; private stderrSize=0;
+ private connectionBytes=0;private messageCount=0;
+ private finishing=false;private finishTimer=0;private finishPromise:Promise<void>|null=null;private finishResolve:(()=>void)|null=null;
  onNotification:((method:string,params:unknown)=>void)|null=null;
  get pid():string|null {return this.process.get_identifier();}
  constructor(executable:string,private timeoutMs=15000) {
@@ -17,7 +19,10 @@ export class RpcClient {
   this.process=launcher.spawnv([path,'app-server','--listen','stdio://']);
   void this.read(this.process.get_stdout_pipe()!,false);
   void this.read(this.process.get_stderr_pipe()!,true);
-  this.process.wait_async(null,()=>this.abort(new Error('Codex process exited')));
+  this.process.wait_async(null,(_source,result)=>{
+   try{this.process.wait_finish(result);}catch{}
+   this.abort(new Error('Codex process exited'),true);
+  });
  }
  private async read(stream:Gio.InputStream,stderr:boolean):Promise<void> {
   try {
@@ -25,8 +30,10 @@ export class RpcClient {
     const bytes=await new Promise<Uint8Array>((resolve,reject)=>stream.read_bytes_async(4096,GLib.PRIORITY_DEFAULT,this.cancel,(_s,r)=>{
      try{resolve(stream.read_bytes_finish(r).toArray());}catch(e){reject(e);}
     }));
-    if(!bytes.length){if(!stderr)this.abort(new Error('Codex stream closed'));return;}
+    if(!bytes.length){if(!stderr&&!this.finishing)this.abort(new Error('Codex stream closed'));return;}
     if(stderr){this.stderrSize+=bytes.length;if(this.stderrSize>MAX_FRAME_BYTES)throw new Error('Codex diagnostic limit exceeded');continue;}
+    this.connectionBytes+=bytes.length;
+    if(this.connectionBytes>MAX_CONNECTION_BYTES)throw new Error('Codex connection input limit exceeded');
     let start=0;
     for(let i=0;i<bytes.length;i++) if(bytes[i]===10) {
      this.append(bytes.slice(start,i));this.deliver();start=i+1;
@@ -34,6 +41,7 @@ export class RpcClient {
     this.append(bytes.slice(start));
    }
   }catch{this.abort(new Error('Codex transport unavailable'));}
+  finally{try{stream.close(null);}catch{}}
  }
  private append(bytes:Uint8Array):void {
   if(this.closed)return;
@@ -43,6 +51,7 @@ export class RpcClient {
  }
  private deliver():void {
   if(this.closed)return;
+  if(++this.messageCount>MAX_CONNECTION_MESSAGES)throw new Error('Codex message limit exceeded');
   const bytes=new Uint8Array(this.frameSize);let offset=0;
   for(const chunk of this.chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   this.chunks=[];this.frameSize=0;
@@ -64,13 +73,13 @@ export class RpcClient {
  }
  async request(method:string,params:unknown={}):Promise<unknown> {
   if(!rpcAllowed(method))throw new Error('RPC method is not permitted');
-  if(this.closed)throw new Error('Codex connection is closed');
+  if(this.closed||this.finishing)throw new Error('Codex connection is closed');
   if(!this.ready) this.ready=this.initialize();
   await this.ready;
   return this.raw(method,params);
  }
  private async initialize():Promise<void> {
-  await this.raw('initialize',{clientInfo:{name:'usagescope_gnome',title:'UsageScope',version:'0.2.0'}});
+  await this.raw('initialize',{clientInfo:{name:'usagescope_gnome',title:'UsageScope',version:'0.2.1'}});
   await this.send({method:'initialized',params:{}});
  }
  private raw(method:string,params:unknown):Promise<unknown> {
@@ -95,12 +104,30 @@ export class RpcClient {
   }));
   return this.writes;
  }
- private abort(error:Error):void {
+ private abort(error:Error,exited=false):void {
   if(this.closed)return;this.closed=true;
+  if(this.finishTimer){GLib.Source.remove(this.finishTimer);this.finishTimer=0;}
   for(const p of this.pending.values()){GLib.Source.remove(p.timer);p.reject(error);}this.pending.clear();
   this.onNotification=null;this.cancel.cancel();this.chunks=[];this.frameSize=0;
   try{this.process.get_stdin_pipe()?.close(null);}catch{}
-  try{this.process.force_exit();}catch{}
+  if(!exited)try{this.process.force_exit();}catch{}
+  this.finishResolve?.();this.finishResolve=null;
+ }
+ /** Complete successful quota-only work with EOF, then bounded exit waiting.
+  * stop() remains immediate for disable, cancellation and protocol failures.
+  */
+ finish():Promise<void> {
+  if(this.closed)return Promise.resolve();
+  if(this.finishPromise)return this.finishPromise;
+  if(this.pending.size){this.stop();return Promise.resolve();}
+  this.finishing=true;this.onNotification=null;
+  this.finishPromise=new Promise(resolve=>{this.finishResolve=resolve;});
+  this.finishTimer=GLib.timeout_add(GLib.PRIORITY_DEFAULT,Math.min(2000,this.timeoutMs),()=>{
+   this.finishTimer=0;this.abort(new Error('Codex exit deadline exceeded'));return GLib.SOURCE_REMOVE;
+  });
+  void this.writes.then(()=>{if(!this.closed)this.process.get_stdin_pipe()?.close(null);})
+   .catch(()=>this.abort(new Error('Codex close failed')));
+  return this.finishPromise;
  }
  stop():void {this.abort(new Error('Codex connection stopped'));}
 }

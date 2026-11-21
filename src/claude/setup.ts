@@ -5,9 +5,12 @@ import {ATTRIBUTES, NOFOLLOW, MAX_BYTES, decode, encode, executable, invalid, mi
 
 const TRANSACTION = '.usagescope-setup';
 const WRAPPER = 'statusline';
+const RECOVERY_PREFIX = '.usagescope-recovery-';
+const MAX_RECOVERIES = 16;
+const ATOMIC_MOVE = Gio.FileCopyFlags.NOFOLLOW_SYMLINKS | Gio.FileCopyFlags.NO_FALLBACK_FOR_MOVE;
 const MANUAL = 'Existing Claude statusline is unsupported. No settings changed. For manual integration, preserve your renderer yourself and feed the same JSON to the bridge; never replace an arbitrary shell command automatically.';
-const HELP = `Usage: gjs -m build/claude/setup.js --preview | --apply | --restore\nOptional with preview/apply: --renderer /absolute/executable --claude /absolute/executable\nSettings: $CLAUDE_CONFIG_DIR/settings.json (default ~/.claude/settings.json).\nPreview is read-only. Apply creates private .usagescope-setup in that directory,\nwith exact original.json backup, manifest.json, and a GJS statusline wrapper.\nOnly an absent statusline or an exact single absolute executable command is\nautomatically supported. --renderer must match that existing command exactly.\nThe wrapper spawns the renderer using argv, without a shell or eval.\nApply discovers and validates claude on PATH when --claude is absent, storing\nits canonical path. Setup never runs Claude. The bridge may read only its\nauth status --json subscriptionType, cached per config directory for 300s.\nIf Claude is absent, the wrapper exports quotas without subscription metadata.\nRestore refuses concurrent edits and restores original settings bytes and mode,\nor removes settings.json if it did not exist before apply, then removes its\ntransaction artifacts. All changes occur only when you explicitly run apply\nor restore; neither is performed by the GNOME extension.\n`;
-interface Original { bytes: Uint8Array | null; mode: number; etag: string | null; }
+const HELP = `Usage: gjs -m build/claude/setup.js --preview | --apply | --restore\nOptional with preview/apply: --renderer /absolute/executable --claude /absolute/executable\nSettings: $CLAUDE_CONFIG_DIR/settings.json (default ~/.claude/settings.json).\nPreview is read-only. Apply creates private .usagescope-setup in that directory,\nwith exact original.json backup, manifest.json, and a GJS statusline wrapper.\nOnly an absent statusline or an exact single absolute executable command is\nautomatically supported. --renderer must match that existing command exactly.\nThe wrapper spawns the renderer using argv, without a shell or eval.\nApply discovers and validates claude on PATH when --claude is absent, storing\nits canonical path. Setup never runs Claude. The bridge may read only its\nauth status --json subscriptionType, cached per config directory for 300s.\nIf Claude is absent, the wrapper exports quotas without subscription metadata.\nRestore refuses concurrent edits and restores original settings bytes and mode,\nor removes settings.json if it did not exist before apply. Restore retains\ncaptured settings (including late writes through open descriptors) and, on\nsuccess, the old transaction in a private .usagescope-recovery-* directory.\nConflicts preserve live wrappers and never overwrite concurrent settings.\nAt most 16 recovery archives are allowed; inspect/preserve them manually\nbefore reaching the cap. All changes occur only when you explicitly run apply\nor restore; neither is performed by the GNOME extension.\n`;
+interface Original { bytes: Uint8Array | null; mode: number; etag: string | null; identity: string | null; }
 interface Manifest { version: 1; originalExists: boolean; originalHash: string | null; originalMode: number; installedHash: string; wrapperHash: string; }
 const hash = (bytes: Uint8Array): string => {
     const checksum = new GLib.Checksum(GLib.ChecksumType.SHA256);
@@ -45,7 +48,7 @@ function configDirectory(create: boolean): Gio.File | null {
 async function readOriginal(file: Gio.File): Promise<Original> {
     let info: Gio.FileInfo;
     try { info = file.query_info(`${ATTRIBUTES},etag::value`, NOFOLLOW, null); }
-    catch (error) { if (missing(error)) return {bytes: null, mode: 0o600, etag: null}; throw error; }
+    catch (error) { if (missing(error)) return {bytes: null, mode: 0o600, etag: null, identity: null}; throw error; }
     const mode = info.get_attribute_uint32('unix::mode') & 0o7777;
     if (info.get_file_type() !== Gio.FileType.REGULAR ||
         (info.has_attribute('standard::is-symlink') && info.get_is_symlink()) ||
@@ -59,7 +62,7 @@ async function readOriginal(file: Gio.File): Promise<Original> {
         const after = file.query_info(`${ATTRIBUTES},etag::value`, NOFOLLOW, cancel);
         sameFile(info, after);
         if (info.get_attribute_string('etag::value') !== after.get_attribute_string('etag::value')) throw invalid();
-        return {bytes, mode, etag: info.get_attribute_string('etag::value')};
+        return {bytes, mode, etag: info.get_attribute_string('etag::value'), identity: info.get_attribute_string('id::file')};
     } finally { stream.close(null); }
 }
 function rendererFor(settings: Record<string, unknown>, requested: string | null): string | null {
@@ -88,22 +91,68 @@ function cleanup(transaction: Gio.File): void {
 }
 async function unchanged(file: Gio.File, before: Original): Promise<void> {
     const current = await readOriginal(file);
-    if ((before.bytes === null) !== (current.bytes === null) ||
-        (before.bytes && current.bytes && (hash(before.bytes) !== hash(current.bytes) || before.etag !== current.etag))) throw invalid();
+    if (!sameOriginal(before, current)) throw invalid();
+}
+function sameOriginal(before: Original, after: Original): boolean {
+    if (before.bytes === null || after.bytes === null) return before.bytes === after.bytes;
+    return before.identity === after.identity && before.etag === after.etag && before.mode === after.mode && hash(before.bytes) === hash(after.bytes);
+}
+function publishExclusive(file: Gio.File, bytes: Uint8Array, mode = 0o600): void {
+    const temporary = file.get_parent()!.get_child(`.usagescope-settings-${GLib.uuid_string_random()}`);
+    try {
+        writeNew(temporary, bytes);
+        if (GLib.chmod(temporary.get_path()!, mode) !== 0) throw invalid();
+        // No OVERWRITE and no copy/delete fallback: never replace a file that
+        // appeared while the captured settings were being validated.
+        temporary.move(file, ATOMIC_MOVE, null, null);
+    } finally { try { temporary.delete(null); } catch { /* may already have moved */ } }
 }
 function replace(file: Gio.File, bytes: Uint8Array, original: Original): void {
     if (original.bytes === null) {
-        const temporary = file.get_parent()!.get_child(`.usagescope-settings-${GLib.uuid_string_random()}`);
-        try { writeNew(temporary, bytes); temporary.move(file, Gio.FileCopyFlags.NOFOLLOW_SYMLINKS, null, null); }
-        finally { try { temporary.delete(null); } catch { /* may already have moved */ } }
+        publishExclusive(file, bytes);
     } else {
         // GIO replaces in the same directory and checks the observed version.
         file.replace_contents(bytes, original.etag, false, Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION, null);
     }
 }
-async function restore(directory: Gio.File): Promise<void> {
+function recoveryCount(directory: Gio.File): number {
+    const iterator = directory.enumerate_children('standard::name', NOFOLLOW, null);
+    let entries = 0, count = 0;
+    try {
+        let info;
+        while ((info = iterator.next_file(null))) {
+            if (++entries > 256) throw invalid();
+            if (!info.get_name().startsWith(RECOVERY_PREFIX)) continue;
+            privateDirectory(directory.get_child(info.get_name()));
+            if (++count > MAX_RECOVERIES) throw invalid();
+        }
+    } finally { iterator.close(null); }
+    return count;
+}
+function newRecovery(directory: Gio.File): Gio.File {
+    if (recoveryCount(directory) >= MAX_RECOVERIES) throw invalid();
+    const recovery = directory.get_child(`${RECOVERY_PREFIX}${GLib.uuid_string_random()}`);
+    if (GLib.mkdir(recovery.get_path()!, 0o700) !== 0) throw invalid();
+    try {
+        privateDirectory(recovery);
+        // Withdraw only this empty reservation if concurrent restores exceed
+        // the cap; no settings or transaction has been moved yet.
+        recoveryCount(directory);
+        return recovery;
+    } catch (error) {
+        try { recovery.delete(null); } catch { /* only our empty reservation */ }
+        throw error;
+    }
+}
+function requireAbsent(file: Gio.File): void {
+    try { file.query_info(ATTRIBUTES, NOFOLLOW, null); }
+    catch (error) { if (missing(error)) return; throw error; }
+    throw invalid();
+}
+async function restore(directory: Gio.File): Promise<string> {
     const transaction = directory.get_child(TRANSACTION);
-    privateDirectory(transaction);
+    const transactionIdentity = privateDirectory(transaction);
+    const directoryIdentity = directory.query_info(ATTRIBUTES, NOFOLLOW, null);
     const cancel = new Gio.Cancellable();
     const manifest = record(JSON.parse(decode(await readPrivate(transaction.get_child('manifest.json'), cancel))));
     if (manifest.version !== 1 || typeof manifest.originalExists !== 'boolean' || typeof manifest.originalMode !== 'number' ||
@@ -118,15 +167,48 @@ async function restore(directory: Gio.File): Promise<void> {
     if (original && hash(original) !== manifest.originalHash) throw invalid();
     // A prepared transaction can be restored after an interrupted apply before publication.
     const beforePublication = original === null ? current.bytes === null : current.bytes !== null && hash(current.bytes) === manifest.originalHash;
-    if (!beforePublication) {
-        if (!current.bytes || hash(current.bytes) !== manifest.installedHash) throw invalid();
-        if (original === null) settings.delete(null);
-        else {
-            replace(settings, original, current);
-            if (GLib.chmod(settings.get_path()!, manifest.originalMode) !== 0) throw invalid();
-        }
+    if (!beforePublication && (!current.bytes || hash(current.bytes) !== manifest.installedHash)) throw invalid();
+    const recovery = newRecovery(directory);
+    const captured = recovery.get_child('settings.json');
+    const archivedTransaction = recovery.get_child(TRANSACTION);
+    let transactionMoved = false;
+    try {
+        noSymlinkDirectories(directory.get_path()!);
+        sameFile(directoryIdentity, directory.query_info(ATTRIBUTES, NOFOLLOW, null));
+        sameFile(transactionIdentity, privateDirectory(transaction));
+        // Rename first and validate the captured version. Retain this inode:
+        // an editor can still write through an FD after our final check.
+        try { settings.move(captured, ATOMIC_MOVE, null, null); }
+        catch (error) { if (!missing(error) || current.bytes !== null) throw error; }
+        if (!sameOriginal(current, await readOriginal(captured))) throw invalid();
+        noSymlinkDirectories(directory.get_path()!);
+        sameFile(directoryIdentity, directory.query_info(ATTRIBUTES, NOFOLLOW, null));
+        if (original === null) requireAbsent(settings);
+        else publishExclusive(settings, original, manifest.originalMode as number);
+        // Keep the live wrapper at its old path until publication succeeds;
+        // concurrent edits may still reference that exact statusLine command.
+        sameFile(transactionIdentity, privateDirectory(transaction));
+        transaction.move(archivedTransaction, ATOMIC_MOVE, null, null);
+        transactionMoved = true;
+        sameFile(transactionIdentity, privateDirectory(archivedTransaction));
+        return recovery.get_basename()!;
+    } catch (error) {
+        // Retain the wrapper for settings which still reference it. Never
+        // overwrite a new transaction or any concurrent settings file.
+        try {
+            noSymlinkDirectories(directory.get_path()!);
+            sameFile(directoryIdentity, directory.query_info(ATTRIBUTES, NOFOLLOW, null));
+            if (transactionMoved) archivedTransaction.move(transaction, ATOMIC_MOVE, null, null);
+        } catch { /* all artifacts remain recoverable */ }
+        try {
+            noSymlinkDirectories(directory.get_path()!);
+            sameFile(directoryIdentity, directory.query_info(ATTRIBUTES, NOFOLLOW, null));
+            const retained = await readOriginal(captured);
+            if (retained.bytes !== null) publishExclusive(settings, retained.bytes, retained.mode);
+        } catch { /* captured inode is still in the private archive */ }
+        printerr(`Claude restore stopped; recovery data retained in ${recovery.get_basename()} inside the Claude config directory. Existing setup artifacts are preserved on conflict.`);
+        throw error;
     }
-    cleanup(transaction);
 }
 export async function runSetup(args: string[]): Promise<number> {
     if (args.length === 1 && args[0] === '--help') { print(HELP); return 0; }
@@ -144,8 +226,8 @@ export async function runSetup(args: string[]): Promise<number> {
         let directory = configDirectory(false);
         if (mode === '--restore') {
             if (!directory) throw invalid();
-            await restore(directory);
-            print('Claude settings restored; UsageScope setup artifacts removed.');
+            const recovery = await restore(directory);
+            print(`Claude settings restored; captured settings and prior setup retained in ${recovery} inside the Claude config directory.`);
             return 0;
         }
         const settingsFile = directory?.get_child('settings.json') ?? Gio.File.new_for_path(GLib.build_filenamev([configPath(), 'settings.json']));

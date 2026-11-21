@@ -13,6 +13,20 @@ const run=async()=>{
  const pid=client.pid; client.stop();
  await new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,50,()=>{resolve();return GLib.SOURCE_REMOVE;}));
  assert(!Gio.File.new_for_path('/proc/'+pid).query_exists(null),'owned child exits');
+ const eofDir=GLib.dir_make_tmp('usagescope-eof-XXXXXX');
+ GLib.setenv('USAGESCOPE_TEST_EOF',eofDir+'/marker',true);
+ const polite=new RpcClient(exe,500);await polite.request('account/read',{});const politePid=polite.pid;
+ await polite.finish();
+ const [,eofBytes]=Gio.File.new_for_path(eofDir+'/marker').load_contents(null);
+ assert(new TextDecoder().decode(eofBytes)==='eof','normal close delivers EOF before process exit');
+ assert(!Gio.File.new_for_path('/proc/'+politePid).query_exists(null),'graceful completion reaps child');
+ Gio.File.new_for_path(eofDir+'/marker').delete(null);
+ GLib.setenv('USAGESCOPE_TEST_MODE','stubborn-eof',true);
+ const stubborn=new RpcClient(exe,250);await stubborn.request('account/read',{});const stubbornPid=stubborn.pid;
+ await stubborn.finish();await new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,50,()=>{resolve();return GLib.SOURCE_REMOVE;}));
+ assert(!Gio.File.new_for_path('/proc/'+stubbornPid).query_exists(null),'non-exiting child is force-closed after deadline');
+ Gio.File.new_for_path(eofDir+'/marker').delete(null);Gio.File.new_for_path(eofDir).delete(null);
+ GLib.unsetenv('USAGESCOPE_TEST_MODE');GLib.unsetenv('USAGESCOPE_TEST_EOF');
  const scratch=GLib.dir_make_tmp('usagescope-executable-XXXXXX');
  const unsafe=Gio.File.new_for_path(scratch).get_child('writable');unsafe.make_directory(null);
  unsafe.set_attribute_uint32('unix::mode',0o777,Gio.FileQueryInfoFlags.NONE,null);
@@ -26,6 +40,13 @@ const run=async()=>{
   const rpc=new RpcClient(exe,150);let failed=false;
   try{await rpc.request('account/read',{});}catch{failed=true;}finally{rpc.stop();}
   assert(failed,'reject '+mode);
+ }
+ GLib.unsetenv('USAGESCOPE_TEST_MODE');
+ for(const mode of ['notifications-flood','connection-oversize']) {
+  GLib.setenv('USAGESCOPE_TEST_MODE',mode,true);
+  const bounded=new RpcClient(exe,5000);let rejected=false;
+  try{await bounded.request('account/read',{});}catch{rejected=true;}finally{bounded.stop();}
+  assert(rejected,'connection-wide resource limit rejects '+mode);
  }
  GLib.unsetenv('USAGESCOPE_TEST_MODE');
  let latest=null;let opened=0;

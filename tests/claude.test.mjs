@@ -29,6 +29,12 @@ const fakeClaude = () => {
 };
 const planCaches = dir => readdirSync(join(dir,'usagescope-gnome')).filter(n=>/^p-[a-f0-9]{64}\.json$/.test(n));
 const newest = dir => snapshots(dir).map(n=>readSnapshot(dir,n)).sort((a,b)=>b.order-a.order)[0];
+const archives = dir => readdirSync(dir).filter(name=>name.startsWith('.usagescope-recovery-'));
+const gjsFixture = (source,env={}) => {
+ const file=join(scratch,`scheduler-${Math.random().toString(16).slice(2)}.mjs`);
+ writeFileSync(file,`import Gio from 'gi://Gio';\nimport GLib from 'gi://GLib';\nconst {runSetup}=await import(${JSON.stringify(`file://${build}/claude/setup.js`)});\nconst {storeSnapshot,projectPayload}=await import(${JSON.stringify(`file://${build}/claude/storage.js`)});\n${source}`);
+ return spawnSync('/usr/bin/gjs',['-m',file],{encoding:'utf8',timeout:10000,env:{...process.env,PATH:'/usr/bin:/bin',G_DEBUG:'fatal-criticals',...env}});
+};
 before(()=>{
  const compiled=spawnSync(join(root,'node_modules/.bin/tsc'),['-p',join(root,'tsconfig.json'),'--outDir',build],{encoding:'utf8'});
  assert.equal(compiled.status,0,compiled.stdout+compiled.stderr);
@@ -69,6 +75,39 @@ test('bridge refuses missing runtime directory, symlinks, and permissive storage
  assert.notEqual(cli('bridge',[],payload(),{XDG_RUNTIME_DIR:loose}).status,0);
  const alias=join(scratch,'runtime-alias');symlinkSync(target,alias);
  assert.notEqual(cli('bridge',[],payload(),{XDG_RUNTIME_DIR:alias}).status,0);
+});
+
+test('setup and runtime reject private leaves under writable ancestors',()=>{
+ for(const mode of [0o770,0o777,0o1777]){
+  if(mode===0o1777&&process.getuid()===0)continue;
+  const shared=config();chmodSync(shared,mode);
+  const dir=join(shared,'private');mkdirSync(dir,{mode:0o700});
+  const original='{"keep":true}\n';writeFileSync(join(dir,'settings.json'),original,{mode:0o600});
+  for(const action of ['--preview','--apply']){
+   const result=cli('setup',[action],'',{CLAUDE_CONFIG_DIR:dir});assert.notEqual(result.status,0,`mode ${mode.toString(8)} must be refused`);
+   assert.equal(readFileSync(join(dir,'settings.json'),'utf8'),original);assert.deepEqual(readdirSync(dir),['settings.json']);
+  }
+  const result=cli('bridge',[],payload(),{XDG_RUNTIME_DIR:dir});assert.notEqual(result.status,0);assert.ok(!existsSync(join(dir,'usagescope-gnome')));
+ }
+});
+
+test('near-full concurrent snapshot publication leaves the next writer usable',async()=>{
+ const dir=runtime(),directory=join(dir,'usagescope-gnome');mkdirSync(directory,{mode:0o700});
+ for(let i=0;i<16;i++)for(let j=1;j<=2;j++){
+  const sourceId=createHash('sha256').update(`source-${i}`).digest('hex'),order=i*2+j;
+  writeFileSync(join(directory,`s-${sourceId}-${String(order).padStart(16,'0')}-00000000-0000-4000-8000-000000000000.json`),JSON.stringify({version:1,sourceId,order,receivedAt:Date.now(),payload:{rate_limits:{five_hour:{used_percentage:10}}}}),{mode:0o600});
+ }
+ for(let i=0;i<16;i++)writeFileSync(join(directory,`p-${createHash('sha256').update(`profile-${i}`).digest('hex')}.json`),'{}',{mode:0o600});
+ const children=Array.from({length:32},()=>spawn('/usr/bin/gjs',['-m',join(build,'claude/bridge.js')],{env:{...process.env,XDG_RUNTIME_DIR:dir},stdio:['pipe','ignore','ignore']}));
+ const completed=children.map(child=>new Promise(resolve=>child.once('close',resolve)));
+ await new Promise(resolve=>setTimeout(resolve,400));
+ children.forEach((child,i)=>child.stdin.end(payload(`source-${i%16}`,42)));
+ const results=await Promise.all(completed);assert.ok(results.every(code=>code===0||code===1));
+ assert.ok(readdirSync(directory).length<=64,'failed publications must withdraw their own final snapshot');
+ assert.ok(!readdirSync(directory).some(name=>name.startsWith('.pending-')||name.includes('lock')));
+ const next=cli('bridge',[],payload('source-0',43),{XDG_RUNTIME_DIR:dir});assert.equal(next.status,0,next.stderr);
+ assert.equal(newest(dir).payload.rate_limits.five_hour.used_percentage,43);
+ assert.equal(planCaches(dir).length,16,'snapshot rollback must preserve existing caches');
 });
 
 test('bridge retains two per source and refuses a seventeenth source',()=>{
@@ -117,9 +156,14 @@ test('setup preview has no writes, apply backs up exact bytes, restore recovers 
  const original='{\n  "theme": "dark", "permissions": {"allow": []}\n}\n';const dir=config(original);const env={CLAUDE_CONFIG_DIR:dir};
  let result=cli('setup',['--preview'],'',env);assert.equal(result.status,0,result.stderr);assert.deepEqual(readdirSync(dir),['settings.json']);
  result=cli('setup',['--apply'],'',env);assert.equal(result.status,0,result.stderr);
+ assert.equal(readFileSync(join(dir,'.usagescope-setup','original.json'),'utf8'),original);
  const installed=JSON.parse(readFileSync(join(dir,'settings.json'),'utf8'));assert.equal(installed.theme,'dark');assert.equal(installed.statusLine.type,'command');
  const wrapper=installed.statusLine.command;const rendered=spawnSync('/bin/sh',['-c',wrapper],{input:payload(),encoding:'utf8',env:{...process.env,XDG_RUNTIME_DIR:runtime()},timeout:10000});assert.equal(rendered.status,0,rendered.stderr);
  result=cli('setup',['--restore'],'',env);assert.equal(result.status,0,result.stderr);assert.equal(readFileSync(join(dir,'settings.json'),'utf8'),original);
+ const recovery=join(dir,archives(dir)[0]);assert.equal(readFileSync(join(recovery,'.usagescope-setup','original.json'),'utf8'),original);
+ assert.equal(statSync(join(recovery,'.usagescope-setup','original.json')).mode&0o777,0o600);
+ assert.equal(cli('setup',['--apply'],'',env).status,0);assert.equal(cli('setup',['--restore'],'',env).status,0);
+ assert.equal(readFileSync(join(dir,'settings.json'),'utf8'),original);assert.equal(archives(dir).length,2);
 });
 
 test('setup preserves an exact executable renderer and refuses shell syntax without writes',()=>{
@@ -162,10 +206,79 @@ test('SIGKILL of a bridge invocation cannot leave a persistent exporter lock',as
 });
 
 test('setup restores initially absent settings and refuses changed wrapper artifacts',()=>{
- const dir=config();const env={CLAUDE_CONFIG_DIR:dir};assert.equal(cli('setup',['--apply'],'',env).status,0);assert.equal(cli('setup',['--restore'],'',env).status,0);assert.deepEqual(readdirSync(dir),[]);
+ const dir=config();const env={CLAUDE_CONFIG_DIR:dir};assert.equal(cli('setup',['--apply'],'',env).status,0);
+ const installed=readFileSync(join(dir,'settings.json'),'utf8');
+ const restored=cli('setup',['--restore'],'',env);assert.equal(restored.status,0,restored.stderr);assert.ok(!existsSync(join(dir,'settings.json')));
+ assert.equal(archives(dir).length,1);assert.match(restored.stdout,/\.usagescope-recovery-/);
+ const recovery=join(dir,archives(dir)[0]);assert.equal(statSync(recovery).mode&0o777,0o700);
+ assert.equal(readFileSync(join(recovery,'settings.json'),'utf8'),installed);assert.ok(existsSync(join(recovery,'.usagescope-setup','manifest.json')));
+ assert.ok(!existsSync(join(dir,'.usagescope-setup')));assert.equal(cli('setup',['--apply'],'',env).status,0,'archive must not prevent reapply');
  const modified=config('{}');const changedEnv={CLAUDE_CONFIG_DIR:modified};assert.equal(cli('setup',['--apply'],'',changedEnv).status,0);
  const wrapper=join(modified,'.usagescope-setup','statusline');writeFileSync(wrapper,'# manually changed\n',{mode:0o700});
- assert.notEqual(cli('setup',['--restore'],'',changedEnv).status,0);assert.ok(existsSync(wrapper));
+ assert.notEqual(cli('setup',['--restore'],'',changedEnv).status,0);assert.ok(existsSync(wrapper));assert.equal(archives(modified).length,0,'changed wrapper must refuse before quarantine');
+});
+
+test('restore keeps concurrent settings and their live wrapper (scheduler fixture)',()=>{
+ for(const initial of [undefined,'{"original":true}\n']){
+  const dir=config(initial),env={CLAUDE_CONFIG_DIR:dir};assert.equal(cli('setup',['--apply'],'',env).status,0);
+  const installed=readFileSync(join(dir,'settings.json'),'utf8');
+  const concurrent=JSON.stringify({...JSON.parse(installed),theme:'edited-theme',permissions:{allow:['fixture-preserved']}});
+  const result=gjsFixture(`
+   const path=GLib.getenv('CLAUDE_CONFIG_DIR')+'/settings.json';
+   const move=Gio.File.prototype.move;let injected=false;
+   Gio.File.prototype.move=function(destination,...args){
+    const ok=move.call(this,destination,...args);
+    if(!injected&&this.get_path()===path){injected=true;GLib.file_set_contents(path,${JSON.stringify(concurrent)});}
+    return ok;
+   };
+   let code;try{code=await runSetup(['--restore']);}finally{Gio.File.prototype.move=move;}
+   if(!injected||code!==1)throw Error('concurrent publication must refuse restore');
+  `,env);
+  assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(readFileSync(join(dir,'settings.json'),'utf8'),concurrent);
+  assert.equal(archives(dir).length,1);const recovery=join(dir,archives(dir)[0]);
+  assert.equal(readFileSync(join(recovery,'settings.json'),'utf8'),installed);
+  assert.ok(existsSync(join(dir,'.usagescope-setup','manifest.json')));assert.ok(existsSync(join(dir,'.usagescope-setup','statusline')));
+ }
+});
+
+test('restore keeps the captured inode for writes through a held-open descriptor',()=>{
+ const original='{"original":true}\n',dir=config(original),env={CLAUDE_CONFIG_DIR:dir};assert.equal(cli('setup',['--apply'],'',env).status,0);
+ const result=gjsFixture(`
+  const path=GLib.getenv('CLAUDE_CONFIG_DIR')+'/settings.json';const file=Gio.File.new_for_path(path);
+  const opened=file.open_readwrite(null);const id=opened.query_info('id::file',null).get_attribute_string('id::file');
+  try{
+   if(await runSetup(['--restore'])!==0)throw Error('restore failed');
+   opened.get_output_stream().write_all(new TextEncoder().encode('LATE_DESCRIPTOR_WRITE'),null);opened.get_output_stream().flush(null);
+   const config=file.get_parent(),it=config.enumerate_children('standard::name',0,null);let item,captured;
+   while((item=it.next_file(null)))if(item.get_name().startsWith('.usagescope-recovery-'))captured=config.get_child(item.get_name()).get_child('settings.json');it.close(null);
+   if(!captured||captured.query_info('id::file',0,null).get_attribute_string('id::file')!==id)throw Error('captured inode lost');
+   if(!new TextDecoder().decode(captured.load_contents(null)[1]).startsWith('LATE_DESCRIPTOR_WRITE'))throw Error('late write lost');
+  }finally{opened.close(null);}
+ `,env);
+ assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(readFileSync(join(dir,'settings.json'),'utf8'),original);
+});
+
+test('restore refuses a full recovery inventory before changing settings or transaction',()=>{
+ const dir=config('{}'),env={CLAUDE_CONFIG_DIR:dir};assert.equal(cli('setup',['--apply'],'',env).status,0);
+ const installed=readFileSync(join(dir,'settings.json'),'utf8');
+ for(let i=0;i<16;i++)mkdirSync(join(dir,`.usagescope-recovery-${String(i).padStart(36,'0')}`),{mode:0o700});
+ const result=cli('setup',['--restore'],'',env);assert.notEqual(result.status,0);
+ assert.equal(readFileSync(join(dir,'settings.json'),'utf8'),installed);assert.ok(existsSync(join(dir,'.usagescope-setup','manifest.json')));assert.equal(archives(dir).length,16);
+});
+
+test('snapshot failure after commit removes only its own new file without an inventory scan',()=>{
+ const dir=runtime();assert.equal(cli('bridge',[],payload('seed'),{XDG_RUNTIME_DIR:dir}).status,0);
+ const directory=join(dir,'usagescope-gnome'),before=readdirSync(directory),bytes=readFileSync(join(directory,before[0]),'utf8');
+ const result=gjsFixture(`
+  const move=Gio.File.prototype.move,enumerate=Gio.File.prototype.enumerate_children;let committed=false,failed=false;
+  Gio.File.prototype.move=function(destination,...args){const ok=move.call(this,destination,...args);if(destination.get_basename().startsWith('s-'))committed=true;return ok;};
+  Gio.File.prototype.enumerate_children=function(...args){if(committed&&!failed){failed=true;throw Error('fixture postcommit inventory failure');}return enumerate.call(this,...args);};
+  let refused=false;try{await storeSnapshot(projectPayload({session_id:'seed',rate_limits:{}}),GLib.get_monotonic_time(),Date.now());}catch{refused=true;}
+  finally{Gio.File.prototype.move=move;Gio.File.prototype.enumerate_children=enumerate;}
+  if(!failed||!refused)throw Error('fixture did not exercise postcommit failure');
+ `,{XDG_RUNTIME_DIR:dir});
+ assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(readdirSync(directory),before);assert.equal(readFileSync(join(directory,before[0]),'utf8'),bytes);
+ assert.equal(cli('bridge',[],payload('seed',42),{XDG_RUNTIME_DIR:dir}).status,0);
 });
 
 test('setup refuses insecure config directories and preserves original settings mode',()=>{
