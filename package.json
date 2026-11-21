@@ -1,0 +1,20 @@
+{
+  "name": "usagescope-gnome",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:gjs": "npm run build && node scripts/test-gjs.mjs",
+    "check": "npm test && npm run test:gjs",
+    "pack": "npm run build && node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "@girs/gjs": "5.6.0",
+    "@girs/gnome-shell": "51.0.1"
+  }
+}
+
