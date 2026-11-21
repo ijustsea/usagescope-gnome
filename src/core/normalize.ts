@@ -1,4 +1,5 @@
 import type {UsageSnapshot} from './types.js';
+import {planName} from './subscription.js';
 function object(value:unknown):Record<string,unknown> {
  if(!value || typeof value!=='object' || Array.isArray(value)) throw new Error('Invalid usage object');
  return value as Record<string,unknown>;
@@ -23,7 +24,7 @@ function safeId(v:string):string {
 }
 function base(provider:'codex'|'claude',sourceId:string,receivedAt:number):UsageSnapshot {
  if(typeof sourceId!=='string'||sourceId.length<1||sourceId.length>256||!Number.isFinite(receivedAt)) throw new Error('Invalid usage source');
- return {provider,sourceId,receivedAt,accountId:null,windows:[],allowed:null};
+ return {provider,sourceId,receivedAt,accountId:null,planType:null,windows:[],allowed:null};
 }
 export function parseCodexUsage(payload:unknown,sourceId:string,receivedAt:number):UsageSnapshot {
  const p=object(payload); const result=base('codex',sourceId,receivedAt);
@@ -31,8 +32,11 @@ export function parseCodexUsage(payload:unknown,sourceId:string,receivedAt:numbe
  if(typeof p.ordinaryUsageAllowed==='boolean') result.allowed=p.ordinaryUsageAllowed;
  const buckets=p.rateLimitsByLimitId==null ? [['codex',object(p.rateLimits)]] as [string,unknown][] : Object.entries(object(p.rateLimitsByLimitId));
  if(buckets.length>64) throw new Error('Too many quota buckets');
+ const plans:string[]=[];let unknownPlan=false;
  for(const [key,value] of buckets) {
   safeId(key); const bucket=object(value);
+  if(key==='codex') result.planType=planName('codex',bucket.planType)?.toLowerCase()??null;
+  if(bucket.planType!=null){const name=planName('codex',bucket.planType);if(name)plans.push(name.toLowerCase());else unknownPlan=true;}
   for(const slot of ['primary','secondary']) {
    if(bucket[slot]==null) continue;
    const w=object(bucket[slot]); const seconds=duration(w.windowDurationMins);
@@ -40,10 +44,13 @@ export function parseCodexUsage(payload:unknown,sourceId:string,receivedAt:numbe
    result.windows.push({id:key+':'+slot,label: (key==='codex'?'':key+' ')+label,durationSeconds:seconds,usedPercent:percent(w.usedPercent),resetsAt:reset(w.resetsAt)});
   }
  }
+ if(!buckets.some(([key])=>key==='codex')&&!unknownPlan&&new Set(plans).size===1)result.planType=plans[0]!;
  return result;
 }
 export function parseClaudeUsage(payload:unknown,sourceId:string,receivedAt:number):UsageSnapshot {
  const p=object(payload); const result=base('claude',sourceId,receivedAt);
+ // This is our stored projection, not the raw Claude statusline input contract.
+ result.planType=planName('claude',p.subscription_type)?.toLowerCase()??null;
  if(p.rate_limits==null) return result;
  const limits=object(p.rate_limits);
  for(const [key,seconds,label] of [['five_hour',18000,'5h'],['seven_day',604800,'7d']] as const) {

@@ -13,6 +13,7 @@ UsageScope is a local GNOME extension, not a sandbox. GNOME extensions execute i
 | Browser authentication | HTTPS exact-host allowlist auth.openai.com/chatgpt.com; reject userinfo, control characters, backslashes and nonstandard ports; no raw auth URLs logged |
 | Authentication | Official CLIs own credentials; UsageScope does not read auth.json, cookies or tokens |
 | Claude input | Bounded stdin, explicit projection of known quota fields, no transcripts/prompts/working directories persisted |
+| Subscription tier | Codex reported planType; optional trusted Claude CLI auth/status projection of subscriptionType only, 64 KiB/2.5 s bound and private 300 s profile/CLI-scoped cache. No inference from AI model names and no auth PII stored |
 | Runtime storage | Private owned directories/files, symlink rejection, immutable snapshots, bounded inventory and retention; never a security boundary against same UID |
 | CLI configuration | Explicit preview/apply/restore; private backup; unsupported existing shell commands refused; no actual config changes from the panel |
 | UI | Plain bounded text, no markup injection, source-aware states, history not presented as current |
@@ -27,6 +28,8 @@ The opt-in Claude setup helper preserves an exact private backup of existing set
 ## Behaviors intentionally excluded
 
 No custom backend, analytics, self-update, downloaded code execution, remote scripts, cookie extraction, model prompts or automatic dependency installation. Missing/expired quotas never imply 100% remaining. Account/session data is never merged or summed. Repeated receipt does not prove fresh server observation.
+
+Website buttons open fixed official URLs only; they neither enable acquisition nor establish local CLI authentication. Claude alerts describe the last reported quota, not a freshly verified server reading. Newly received threshold crossings below 30% notify once, with recovery at 35% required to rearm; stale, repeated, expired or first samples do not alert.
 
 ## Verification
 

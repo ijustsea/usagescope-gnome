@@ -9,3 +9,7 @@ State: zero is valid, null/missing not 100. Valid full payload omits a window =>
 UI: panel percentages and menu showing source receipt age/errors; connection button, cancelable Codex login, refresh Codex, Claude setup instructions, monitoring toggles and settings. Default no provider acquisition until explicitly enabled; enabling existing login may query quota but no model calls.
 Distribution: zip built from tested JS, metadata, CSS, compiled schema, bridge/core only. No bundled binary/node_modules/credentials, no self-update. README + security document include installation, integration, limitations and actual verification coverage.
 
+## User-authorized v0.2 UI revision
+
+The main UI is now compact provider cards with remaining-quota bars: ChatGPT blue, Claude orange, <=30% red. Both providers alert on new reports crossing below30 and rearm at35; Claude describes last reported values without server-freshness inference. Subscription plan tiers replace the requested AI-model-name interpretation. Codex reported planType is used; explicit trusted Claude auth/status may supply subscriptionType through a bounded private300s cache. Main website buttons open fixed official sign-in/sign-up sites only; local CLI setup remains in collapsed settings. Whole-popup scrolling bounds the menu; no hidden label may leave a blank row. README uses plain numeric installation steps and separates Wayland logout/login from enable.
+

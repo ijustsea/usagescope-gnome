@@ -1,18 +1,23 @@
-.usagescope-panel {
-  spacing: 6px;
-}
-.usagescope-menu .popup-menu-content {
-  max-width: 42em;
-}
-.usagescope-detail {
-  max-width: 36em;
-  font-size: 0.9em;
-  color: #c0bfbc;
-}
-.usagescope-error {
-  color: #ffbe6f;
-}
-.usagescope-path {
-  min-width: 22em;
-  max-width: 34em;
-}
+.usagescope-menu .popup-menu-content { width: 340px; padding: 6px; }
+.usagescope-scroll { max-height: 460px; }
+.usagescope-menu .usagescope-card-row { padding: 0; margin: 0 0 6px 0; }
+.usagescope-card { padding: 10px; spacing: 8px; border-radius: 12px; background-color: rgba(128, 128, 128, 0.10); color: #f6f5f4; }
+.usagescope-card-header { spacing: 8px; }
+.usagescope-title { font-weight: bold; font-size: 15px; }
+.usagescope-plan { padding: 2px 7px; border-radius: 8px; background-color: rgba(128, 128, 128, 0.15); font-size: 11px; }
+.usagescope-quota { spacing: 4px; }
+.usagescope-quota-line { spacing: 8px; }
+.usagescope-period { font-size: 12px; }
+.usagescope-amount { font-size: 12px; font-weight: bold; }
+.usagescope-track { height: 8px; border-radius: 4px; background-color: rgba(128, 128, 128, 0.25); }
+.usagescope-fill { height: 8px; border-radius: 4px; }
+.usagescope-fill-codex { background-color: #3584e4; }
+.usagescope-fill-claude { background-color: #e99550; }
+.usagescope-fill-danger { background-color: #ed333b; }
+.usagescope-fill-muted { background-color: #777777; }
+.usagescope-reset, .usagescope-status { font-size: 10px; color: #9a9996; }
+.usagescope-card-footer { spacing: 6px; }
+.usagescope-link { padding: 3px 0 3px 6px; font-size: 11px; color: #99c1f1; border-radius: 4px; }
+.usagescope-link:hover, .usagescope-link:focus { background-color: rgba(128, 128, 128, 0.2); }
+.usagescope-note { max-width: 300px; font-size: 11px; color: #9a9996; }
+.usagescope-path { width: 280px; }

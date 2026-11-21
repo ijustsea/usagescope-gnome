@@ -1,6 +1,6 @@
 {
   "name": "usagescope-gnome",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -19,4 +19,3 @@
     "@girs/gnome-shell": "51.0.1"
   }
 }
-

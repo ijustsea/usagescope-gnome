@@ -6,7 +6,7 @@ import {ATTRIBUTES, NOFOLLOW, MAX_BYTES, decode, encode, executable, invalid, mi
 const TRANSACTION = '.usagescope-setup';
 const WRAPPER = 'statusline';
 const MANUAL = 'Existing Claude statusline is unsupported. No settings changed. For manual integration, preserve your renderer yourself and feed the same JSON to the bridge; never replace an arbitrary shell command automatically.';
-const HELP = `Usage: gjs -m build/claude/setup.js --preview | --apply | --restore\nOptional with preview/apply: --renderer /absolute/executable\nSettings: $CLAUDE_CONFIG_DIR/settings.json (default ~/.claude/settings.json).\nPreview is read-only. Apply creates private .usagescope-setup in that directory,\nwith exact original.json backup, manifest.json, and a GJS statusline wrapper.\nOnly an absent statusline or an exact single absolute executable command is\nautomatically supported. --renderer must match that existing command exactly.\nThe wrapper spawns the renderer using argv, without a shell or eval.\nRestore refuses concurrent edits and restores original settings bytes and mode,\nor removes settings.json if it did not exist before apply, then removes its\ntransaction artifacts. All changes occur only when you explicitly run apply\nor restore; neither is performed by the GNOME extension.\n`;
+const HELP = `Usage: gjs -m build/claude/setup.js --preview | --apply | --restore\nOptional with preview/apply: --renderer /absolute/executable --claude /absolute/executable\nSettings: $CLAUDE_CONFIG_DIR/settings.json (default ~/.claude/settings.json).\nPreview is read-only. Apply creates private .usagescope-setup in that directory,\nwith exact original.json backup, manifest.json, and a GJS statusline wrapper.\nOnly an absent statusline or an exact single absolute executable command is\nautomatically supported. --renderer must match that existing command exactly.\nThe wrapper spawns the renderer using argv, without a shell or eval.\nApply discovers and validates claude on PATH when --claude is absent, storing\nits canonical path. Setup never runs Claude. The bridge may read only its\nauth status --json subscriptionType, cached per config directory for 300s.\nIf Claude is absent, the wrapper exports quotas without subscription metadata.\nRestore refuses concurrent edits and restores original settings bytes and mode,\nor removes settings.json if it did not exist before apply, then removes its\ntransaction artifacts. All changes occur only when you explicitly run apply\nor restore; neither is performed by the GNOME extension.\n`;
 interface Original { bytes: Uint8Array | null; mode: number; etag: string | null; }
 interface Manifest { version: 1; originalExists: boolean; originalHash: string | null; originalMode: number; installedHash: string; wrapperHash: string; }
 const hash = (bytes: Uint8Array): string => {
@@ -131,9 +131,14 @@ async function restore(directory: Gio.File): Promise<void> {
 export async function runSetup(args: string[]): Promise<number> {
     if (args.length === 1 && args[0] === '--help') { print(HELP); return 0; }
     const mode = args[0];
-    let requested: string | null = null;
-    if (args.length === 3 && args[1] === '--renderer' && mode !== '--restore') requested = args[2]!;
-    else if (args.length !== 1) { printerr(HELP); return 1; }
+    let requested: string | null = null, requestedClaude: string | null = null;
+    for (let i = 1; i < args.length; i += 2) {
+        const value = args[i + 1];
+        if (mode === '--restore' || !value || !GLib.path_is_absolute(value)) { printerr(HELP); return 1; }
+        if (args[i] === '--renderer' && requested === null) requested = value;
+        else if (args[i] === '--claude' && requestedClaude === null) requestedClaude = value;
+        else { printerr(HELP); return 1; }
+    }
     if (!['--preview', '--apply', '--restore'].includes(mode!)) { printerr(HELP); return 1; }
     try {
         let directory = configDirectory(false);
@@ -147,6 +152,9 @@ export async function runSetup(args: string[]): Promise<number> {
         const original = await readOriginal(settingsFile);
         const settings = original.bytes === null ? {} : record(JSON.parse(decode(original.bytes)));
         const renderer = rendererFor(settings, requested);
+        // Discovery only validates a path. Setup never executes Claude or signs in.
+        const discoveredClaude = requestedClaude ?? (mode === '--apply' ? GLib.find_program_in_path('claude') : null);
+        const claude = discoveredClaude === null ? null : executable(discoveredClaude);
         if (mode === '--preview') {
             print(`Preview only: ${renderer ? 'preserve existing executable renderer' : 'add quota-only statusline'}; apply stores a private exact backup and wrapper in the Claude user config directory. No settings changed.`);
             return 0;
@@ -163,7 +171,7 @@ export async function runSetup(args: string[]): Promise<number> {
             if (!discovered) throw invalid();
             const gjs = executable(discovered);
             const wrapper = transaction.get_child(WRAPPER);
-            const wrapperBytes = encode(`#!${gjs} -m\nimport System from 'system';\nimport {runBridge} from ${JSON.stringify(Gio.File.new_for_uri(import.meta.url).get_parent()!.get_child('bridge.js').get_uri())};\nSystem.exit(await runBridge(${JSON.stringify(renderer)}));\n`);
+            const wrapperBytes = encode(`#!${gjs} -m\nimport System from 'system';\nimport {runBridge} from ${JSON.stringify(Gio.File.new_for_uri(import.meta.url).get_parent()!.get_child('bridge.js').get_uri())};\nSystem.exit(await runBridge(${JSON.stringify(renderer)}, ${JSON.stringify(claude)}));\n`);
             const installed = {...settings, statusLine: {...(settings.statusLine == null ? {} : record(settings.statusLine)), type: 'command', command: shellQuote(wrapper.get_path()!)}};
             const installedBytes = encode(`${JSON.stringify(installed, null, 2)}\n`);
             if (installedBytes.length > MAX_BYTES) throw invalid();

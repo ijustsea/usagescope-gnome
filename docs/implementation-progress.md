@@ -33,3 +33,16 @@ Ruling: original single resident Codex child changed to quota-only transient chi
 - Passive Claude receipt does not prove server freshness; account identity is unknown, multiple sources require explicit choice, and no independent offline-Claude refresh or desktop alert is provided.
 - No universal low-resource or complete malware-clearance claim. Browser URL validation and official CLI authentication are separate from third-party service security.
 
+## Compact UI / subscription revision — v0.2.0
+
+User revised the visible UI to compact horizontal remaining-quota bars and subscription tiers, not inference model names. This supersedes the original Codex-only 20% notification rule.
+
+- Root cause of the tall popup: hidden labels left their PopupMenu row containers allocated. Replaced fixed sparse rows with two bounded provider cards; settings are collapsed and the whole popup scrolls within the active monitor.
+- ChatGPT blue / Claude orange; each bar is red at <=30% remaining. Both providers notify on a new report crossing below30, rearm only after>=35, and suppress first/repeated/stale/expired/source-switched samples. Claude notification explicitly describes the last report, not server freshness.
+- Main cards contain tier, two actual quota windows, remaining/used percentages, last receipt and fixed official website links. Browser actions neither enable monitoring nor authenticate the CLI. Server-reported usage restrictions remain visible as a compact status.
+- Plan data: reported Codex bucket planType; Claude optional trusted auth/status subscriptionType only. Explicit CLI supplied by setup, 64KiB/2.5s probe bounds, private 300s profile+CLI cache,16 cache limit with concurrent publication checks. Unknown tiers stay unknown and old bridges/snapshots remain accepted. No email/org/auth output persisted.
+- README now starts with location-independent copyable commands: pack/install -> GNOME logout/login -> enable. Regular numbered steps only; separate first-clone, update, CLI login, preview/apply/restore and troubleshooting.
+- Actual final verification:60 Node tests + both GJS suites passed; native GNOME popup opened and inspected at354x365px, including1024x480 display test. Four real bars have correct fraction width, left alignment and blue/orange/red styles; diagnostics are absent from visible cards. A centered-fill regression was reproduced and fixed with FixedLayout. Test-only probes are appended to an isolated extracted COPY, never distributed.
+- Independent review found no remaining material issue in its scope; it reran59 pre-final-status tests and verified both-provider alert wiring, website auth separation and ZIP exclusions. Final status-only regression brings the main suite to60. Main separately performed the native visual/small-monitor checks.
+- npm audit:0 known dependency vulnerabilities. Not a malware-clearance guarantee. Existing user desktop, login and Claude configuration remain untouched.
+

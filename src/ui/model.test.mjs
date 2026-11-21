@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {LowQuotaAlerts, nextUiDeadline, plainText, receiptAge, setupCommands, sourceLabel} from './model.ts';
+import {LowQuotaAlerts, nextUiDeadline, plainText, receiptAge, setupCommands, sourceLabel, quotaRows, cardStatus} from '../../build/ui/model.js';
 
 const now = 1_800_000_000_000;
 function sample(remaining, sequence, changes = {}) {
@@ -12,19 +12,42 @@ function sample(remaining, sequence, changes = {}) {
     }};
 }
 
-test('Codex alerts only cross below 20, then rearm at 25', () => {
+test('Codex alerts cross below 30 once, then rearm only at 35', () => {
     const alerts = new LowQuotaAlerts();
-    assert.equal(alerts.observe(sample(30, 1), now).length, 0);
-    assert.equal(alerts.observe(sample(20, 2), now).length, 0);
-    assert.equal(alerts.observe(sample(19, 3), now).length, 1);
-    assert.equal(alerts.observe(sample(19, 3), now).length, 0);
-    assert.equal(alerts.observe(sample(24, 4), now).length, 0);
-    assert.equal(alerts.observe(sample(19, 5), now).length, 0);
-    assert.equal(alerts.observe(sample(25, 6), now).length, 0);
+    assert.equal(alerts.observe(sample(40, 1), now).length, 0);
+    assert.equal(alerts.observe(sample(30, 2), now).length, 0);
+    assert.equal(alerts.observe(sample(29, 3), now).length, 1);
+    assert.equal(alerts.observe(sample(29, 3), now).length, 0);
+    assert.equal(alerts.observe(sample(34, 4), now).length, 0);
+    assert.equal(alerts.observe(sample(29, 5), now).length, 0);
+    assert.equal(alerts.observe(sample(35, 6), now).length, 0);
     assert.equal(alerts.observe(sample(0, 7), now).length, 1);
 });
+test('Claude reported-value alerts use independent source baseline at 30%',()=>{
+ const alerts=new LowQuotaAlerts('claude');
+ assert.equal(alerts.observe(sample(45,1,{provider:'claude'}),now).length,0);
+ assert.equal(alerts.observe(sample(29,2,{provider:'claude'}),now).length,1);
+ assert.equal(alerts.observe(sample(29,3,{provider:'claude'}),now).length,0);
+ assert.equal(alerts.observe(sample(10,4,{provider:'claude',sourceId:'other'}),now).length,0);
+});
+test('bar rows show actual remaining fraction, 30 is red, expired data is neutral',()=>{
+ const row=quotaRows(sample(30,1),now)[0];
+ assert.equal(row.remainingPercent,30);assert.equal(row.usedPercent,70);assert.equal(row.fraction,0.3);assert.equal(row.tone,'danger');
+ assert.equal(quotaRows(sample(80,1),now)[0].tone,'codex');
+ assert.equal(quotaRows(sample(80,1,{provider:'claude'}),now)[0].tone,'claude');
+ const old=sample(10,1);old.snapshot.windows[0].resetsAt=now/1000;
+ assert.equal(quotaRows(old,now)[0].remainingPercent,null);assert.equal(quotaRows(old,now)[0].tone,'muted');
+ assert.deepEqual(quotaRows({status:'disabled',snapshot:null,message:''},now),[]);
+});
+test('many quota buckets cannot inflate the compact two-row card',()=>{
+ const v=sample(50,1);v.snapshot.windows=Array.from({length:15},(_,i)=>({...v.snapshot.windows[0],id:'quota:'+i}));
+ assert.equal(quotaRows(v,now).length,2);
+});
+test('compact status keeps server-reported restriction visible',()=>{
+ assert.match(cardStatus(sample(80,1,{allowed:false}),now),/사용 제한/);
+});
 
-test('initial low sample, Claude, reset and source changes never alert', () => {
+test('initial low sample, wrong provider, reset and source changes never alert', () => {
     const alerts = new LowQuotaAlerts();
     assert.equal(alerts.observe(sample(10, 1), now).length, 0);
     assert.equal(alerts.observe(sample(24, 2), now).length, 0);

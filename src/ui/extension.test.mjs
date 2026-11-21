@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
 import {stripTypeScriptTypes} from 'node:module';
-import {nextUiDeadline} from './model.ts';
+import {nextUiDeadline} from '../../build/ui/model.js';
+import {websiteUrl} from '../../build/core/policy.js';
 
 // Exercise the extension's actual orchestration. Only Shell actors, settings and
 // provider I/O are replaced; the isolated Shell smoke covers real actor teardown.
@@ -61,8 +62,8 @@ function harness() {
     }};
     const Main = {panel: {addToStatusArea() {}}, messageTray: {add() {}}};
     const Extension = new Function('Gio', 'GLib', 'Extension', 'Main', 'MessageTray', 'CodexController',
-        'ClaudeController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', emitted)(
-        Gio, GLib, Base, Main, {}, Codex, Claude, Indicator, Alerts, nextUiDeadline, value => value);
+        'ClaudeController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', 'websiteUrl', emitted)(
+        Gio, GLib, Base, Main, {}, Codex, Claude, Indicator, Alerts, nextUiDeadline, value => value, websiteUrl);
     h.extension = new Extension();
     h.extension.enable();
     return h;
@@ -91,6 +92,13 @@ test('defaults acquire nothing; disable synchronously removes owned UI and timer
     const before = h.state;
     h.codex[0].options.publish({status: 'error', snapshot: null, message: 'late'});
     assert.equal(h.state, before);
+});
+test('website links do not enable monitoring or claim local CLI authentication',()=>{
+ const h=harness();
+ h.actions.openWebsite('codex');h.actions.openWebsite('claude');
+ assert.deepEqual(h.launches,['https://chatgpt.com/auth/login','https://claude.ai/login']);
+ assert.equal(h.codex.length,0);assert.equal(h.claude.length,0);assert.equal(h.state.login,false);
+ h.extension.disable();h.actions.openWebsite('codex');assert.equal(h.launches.length,2);
 });
 
 test('cancel before login-start response prevents browser and cancels the eventual login', async () => {

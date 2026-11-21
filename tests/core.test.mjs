@@ -61,3 +61,28 @@ test('expired data is never displayed as a live remaining number',()=>{
  assert.equal(panelText(view,1800003600001).includes('75%'),false);
  assert.match(formatWindow(s.windows[0],1800003600001),/확인|expired|refresh/i);
 });
+
+test('subscription names use a bounded provider-specific whitelist',async()=>{
+ const {planName}=await import('../build/core/subscription.js');
+ for(const [raw,want] of [['free','Free'],['go','Go'],['plus','Plus'],['pro','Pro'],['team','Team'],['business','Business'],['enterprise','Enterprise'],['edu','Edu']])assert.equal(planName('codex',raw),want);
+ for(const [raw,want] of [['pro','Pro'],['max','Max'],['team','Team'],['enterprise','Enterprise'],['ultra','Ultra']])assert.equal(planName('claude',raw),want);
+ assert.equal(planName('codex','PLUS'),'Plus');assert.equal(planName('claude','plus'),null);assert.equal(planName('codex','max'),null);
+ for(const value of [null,undefined,{},1,'','unknown','<b>pro</b>','pro\n','x'.repeat(10000),'claude-opus-4-6'])assert.equal(planName('claude',value),null);
+});
+
+test('Codex subscription comes from reported buckets and ambiguous plans stay unknown',()=>{
+ assert.equal(parseCodexUsage({...payload,rateLimits:{...payload.rateLimits,planType:'plus'}},'a',now).planType,'plus');
+ assert.equal(parseCodexUsage({rateLimitsByLimitId:{codex:{planType:'pro'},other:{planType:'plus'}}},'a',now).planType,'pro');
+ assert.equal(parseCodexUsage({rateLimitsByLimitId:{a:{planType:'team'},b:{planType:'team'}}},'a',now).planType,'team');
+ assert.equal(parseCodexUsage({rateLimitsByLimitId:{a:{planType:'pro'},b:{planType:'plus'}}},'a',now).planType,null);
+ assert.equal(parseCodexUsage({rateLimitsByLimitId:{codex:{planType:'new-tier'},other:{planType:'pro'}}},'a',now).planType,null);
+ assert.equal(parseCodexUsage({...payload,planType:'pro',model:'pro'},'a',now).planType,null);
+ assert.equal(parseCodexUsage({rateLimits:{planType:'untrusted'.repeat(1000)}},'a',now).planType,null);
+});
+
+test('Claude normalizes projected subscription metadata without inferring it from models or quota size',()=>{
+ assert.equal(parseClaudeUsage({subscription_type:'max',rate_limits:{}},'a',now).planType,'max');
+ assert.equal(parseClaudeUsage({subscription_type:'pro'},'a',now).planType,'pro');
+ assert.equal(parseClaudeUsage({subscription_type:'<b>max</b>'},'a',now).planType,null);
+ assert.equal(parseClaudeUsage({model:{id:'pro',display_name:'Max'},rate_limits:{five_hour:{used_percentage:0}}},'a',now).planType,null);
+});

@@ -8,9 +8,12 @@ GLib.setenv('XDG_RUNTIME_DIR',ownRuntime,true);
 const assert=(condition,message)=>{if(!condition)throw Error(message);};
 const pause=ms=>new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,ms,()=>{resolve();return GLib.SOURCE_REMOVE;}));
 const input=(session,value)=>({session_id:session,rate_limits:{five_hour:{used_percentage:value,resets_at:1795248000}}});
-const store=async(session,value,order=GLib.get_monotonic_time())=>storeSnapshot(projectPayload(input(session,value)),order,Date.now());
+const store=async(session,value,order=GLib.get_monotonic_time(),plan=null)=>storeSnapshot(projectPayload(input(session,value),plan),order,Date.now());
 const views=[];const controller=new ClaudeController({publish:view=>views.push(view)});
 try {
+ const raw={...input('a',10),subscription_type:'max',model:{id:'max',display_name:'Max'}};
+ assert(projectPayload(raw).payload.subscription_type===undefined,'raw subscription/model must not supply plan');
+ assert(projectPayload(raw,'pro').payload.subscription_type==='pro','only explicit probe metadata supplies plan');
  controller.start();await controller.refresh();assert(views.at(-1).status==='waiting','empty storage must wait');
  await store('a',0);for(let i=0;i<30&&views.at(-1).status!=='ready';i++)await pause(20);
  assert(views.at(-1).status==='ready','monitor must see snapshot without refresh');assert(views.at(-1).snapshot.windows[0].usedPercent===0,'zero valid');
@@ -23,9 +26,9 @@ try {
  bad.delete(null);
  await store('a',80,GLib.get_monotonic_time()+100);await store('a',10,GLib.get_monotonic_time()-1000000);await controller.refresh();
  assert(views.at(-1).snapshot.windows[0].usedPercent===80,'older late writer must not win');
- await store('b',45);await controller.refresh();assert(controller.listSources().length===2,'source list');assert(views.at(-1).snapshot===null,'multiple sources must clear automatic selection');assert(views.at(-1).status==='waiting','explicit source required');
+ await store('b',45,GLib.get_monotonic_time(),'max');await controller.refresh();assert(controller.listSources().length===2,'source list');assert(views.at(-1).snapshot===null,'multiple sources must clear automatic selection');assert(views.at(-1).status==='waiting','explicit source required');
  await controller.selectSource(source);assert(views.at(-1).snapshot.sourceId===source,'explicit source honored');assert(views.at(-1).snapshot.windows[0].usedPercent===80,'no blending');
- const other=controller.listSources().find(id=>id!==source);await controller.selectSource(other);assert(views.at(-1).snapshot.windows[0].usedPercent===45,'switch clears other account');
+ const other=controller.listSources().find(id=>id!==source);await controller.selectSource(other);assert(views.at(-1).snapshot.windows[0].usedPercent===45,'switch clears other account');assert(views.at(-1).snapshot.planType==='max','projected plan reaches selected source');
  await controller.connect();assert(/setup/i.test(views.at(-1).message),'connect gives guidance');
  const pending=controller.refresh();controller.stop();await pending;const count=views.length;await store('b',90);await pause(100);assert(views.length===count,'no publication after stop');
  const restart=[];const stopped=new ClaudeController({publish:view=>restart.push(view)});stopped.start();stopped.stop();await pause(100);assert(restart.length===0,'stop cancels initial scan');

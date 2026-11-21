@@ -1,19 +1,24 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import {parseClaudeUsage} from '../core/normalize.js';
+import {planName} from '../core/subscription.js';
 import {ATTRIBUTES, NOFOLLOW, MAX_BYTES, privateDirectory, privateFile, noSymlinkDirectories, sameFile, missing, invalid, record, encode, writeNew} from './io.js';
 
 export const MAX_SOURCES = 16;
 export const MAX_ENTRIES = 64;
 export const SNAPSHOT_NAME = /^s-([a-f0-9]{64})-([0-9]{16})-([a-f0-9-]{36})\.json$/;
-export interface Projection { sourceId: string; payload: {rate_limits: Record<string, {used_percentage: number; resets_at?: number | null}>}; }
+export interface Projection { sourceId: string; payload: {rate_limits: Record<string, {used_percentage: number; resets_at?: number | null}>; subscription_type?: string}; }
 export interface StoredSnapshot extends Projection { version: 1; order: number; receivedAt: number; }
-export function projectPayload(input: unknown): Projection {
+export function projectPayload(input: unknown, planType: unknown = null): Projection {
     const raw = record(input);
     if (typeof raw.session_id !== 'string' || !raw.session_id.trim() || encode(raw.session_id).length > 512) throw invalid();
     const sourceId = GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, raw.session_id, -1)!;
     const rates = raw.rate_limits == null ? {} : record(raw.rate_limits);
     const payload: Projection['payload'] = {rate_limits: {}};
+    // Internal metadata supplied by the bounded CLI probe only. Raw statusline
+    // subscription_type and model fields are deliberately never copied.
+    const name = planName('claude', planType);
+    if (name) payload.subscription_type = name.toLowerCase();
     for (const name of ['five_hour', 'seven_day']) {
         if (!(name in rates) || rates[name] === null) continue;
         const quota = record(rates[name]);

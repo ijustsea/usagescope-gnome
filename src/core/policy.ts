@@ -1,5 +1,10 @@
 export const MAX_FRAME_BYTES=1024*1024;
 export const MAX_INPUT_BYTES=256*1024;
+export function websiteUrl(provider:unknown):string {
+ if(provider==='codex')return 'https://chatgpt.com/auth/login';
+ if(provider==='claude')return 'https://claude.ai/login';
+ throw new Error('Unknown provider');
+}
 const METHODS=new Set(['initialize','account/read','account/rateLimits/read','account/login/start','account/login/cancel']);
 export function rpcAllowed(method:string):boolean {return METHODS.has(method);}
 export function validateAuthUrl(uri:unknown):string {

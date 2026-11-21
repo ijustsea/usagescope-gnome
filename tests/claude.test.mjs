@@ -9,13 +9,26 @@ import {createHash} from 'node:crypto';
 const root = resolve(import.meta.dirname, '..');
 const scratch = mkdtempSync(join(tmpdir(), 'usagescope-claude-tests-'));
 const build = join(scratch, 'build');
-const cli = (name, args=[], input='', env={}) => spawnSync('/usr/bin/gjs', ['-m', join(build, 'claude', `${name}.js`), ...args], {input, encoding:'utf8', timeout:10000, env:{...process.env, ...env}});
+const cli = (name, args=[], input='', env={}) => spawnSync('/usr/bin/gjs', ['-m', join(build, 'claude', `${name}.js`), ...args], {input, encoding:'utf8', timeout:10000, env:{...process.env, PATH:'/usr/bin:/bin', ...env}});
 const payload = (session='session-A', used=23) => JSON.stringify({session_id:session, rate_limits:{five_hour:{used_percentage:used,resets_at:1795248000},seven_day:{used_percentage:0,resets_at:null}}, transcript_path:'SECRET_TRANSCRIPT', api_key:'SECRET_TOKEN', workspace:{current_dir:'SECRET_DIRECTORY'}});
 const runtime = () => mkdtempSync(join(scratch, 'runtime-'));
-const snapshots = dir => readdirSync(join(dir,'usagescope-gnome')).filter(n=>n.endsWith('.json'));
+const snapshots = dir => readdirSync(join(dir,'usagescope-gnome')).filter(n=>/^s-.*\.json$/.test(n));
 const readSnapshot = (dir,name) => JSON.parse(readFileSync(join(dir,'usagescope-gnome',name),'utf8'));
 const config = settings => {const dir=mkdtempSync(join(scratch,'config-')); if(settings!==undefined)writeFileSync(join(dir,'settings.json'),settings,{mode:0o600});return dir;};
 const renderer = (dir, source='process.stdout.write(Buffer.from([65,0,66,10]));') => {const file=join(dir,'renderer');writeFileSync(file,`#!${process.execPath}\n${source}\n`,{mode:0o700});return file;};
+const fakeClaude = () => {
+ const dir=config();const file=join(dir,'claude');const calls=join(dir,'calls');
+ writeFileSync(file,`#!${process.execPath}\nconst fs=require('node:fs');
+ if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['auth','status','--json']))process.exit(9);
+ fs.appendFileSync(${JSON.stringify(calls)},'call\\n');
+ if(process.env.USAGESCOPE_FAKE_EXPECT_PROFILE!==process.env.CLAUDE_CONFIG_DIR)process.exit(8);
+ process.stderr.write('SECRET_AUTH_STDERR');
+ const output=()=>{process.stdout.write(process.env.USAGESCOPE_FAKE_OUTPUT??'{"subscriptionType":"max","email":"SECRET_EMAIL","orgId":"SECRET_ORG","token":"SECRET_TOKEN"}');process.exit(Number(process.env.USAGESCOPE_FAKE_EXIT??0));};
+ if(process.env.USAGESCOPE_FAKE_HANG)setTimeout(output,10000);else if(process.env.USAGESCOPE_FAKE_DELAY_MS)setTimeout(output,Number(process.env.USAGESCOPE_FAKE_DELAY_MS));else output();\n`,{mode:0o700});
+ const profile=config();return {file,calls,env:{CLAUDE_CONFIG_DIR:profile,USAGESCOPE_FAKE_EXPECT_PROFILE:profile},count:()=>existsSync(calls)?readFileSync(calls,'utf8').trim().split('\n').length:0};
+};
+const planCaches = dir => readdirSync(join(dir,'usagescope-gnome')).filter(n=>/^p-[a-f0-9]{64}\.json$/.test(n));
+const newest = dir => snapshots(dir).map(n=>readSnapshot(dir,n)).sort((a,b)=>b.order-a.order)[0];
 before(()=>{
  const compiled=spawnSync(join(root,'node_modules/.bin/tsc'),['-p',join(root,'tsconfig.json'),'--outDir',build],{encoding:'utf8'});
  assert.equal(compiled.status,0,compiled.stdout+compiled.stderr);
@@ -180,4 +193,98 @@ test('bridge refuses renderers reached through writable parents or a symlink to 
  for(const path of [exe,alias]){
   const result=cli('bridge',['--renderer',path],payload(),{XDG_RUNTIME_DIR:runtime()});assert.notEqual(result.status,0);assert.equal(result.stdout,'');
  }
+});
+
+test('bridge probes only an explicit CLI and caches a private minimal plan for 300 seconds',()=>{
+ const fake=fakeClaude(),dir=runtime();const env={...fake.env,XDG_RUNTIME_DIR:dir,PATH:`${resolve(fake.file,'..')}:/usr/bin:/bin`};
+ const untrusted=JSON.stringify({...JSON.parse(payload()),subscription_type:'pro',model:{id:'pro',display_name:'Pro'}});
+ let result=cli('bridge',[],untrusted,env);assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),0);assert.equal(newest(dir).payload.subscription_type,undefined);
+ result=cli('bridge',['--claude',fake.file],untrusted,env);assert.equal(result.status,0,result.stderr);assert.equal(result.stdout,'');assert.equal(result.stderr,'');assert.equal(fake.count(),1);assert.equal(newest(dir).payload.subscription_type,'max');
+ result=cli('bridge',['--claude',fake.file],payload(),{...env,USAGESCOPE_FAKE_OUTPUT:'{"subscriptionType":"pro"}'});assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),1);assert.equal(newest(dir).payload.subscription_type,'max');
+ const files=planCaches(dir);assert.equal(files.length,1);const file=join(dir,'usagescope-gnome',files[0]);assert.equal(statSync(file).mode&0o777,0o600);
+ let cache=JSON.parse(readFileSync(file,'utf8'));assert.equal(cache.planType,'max');assert.ok(!JSON.stringify(cache).includes('SECRET'));assert.ok(!JSON.stringify(cache).includes(fake.env.CLAUDE_CONFIG_DIR));assert.ok(!JSON.stringify(cache).includes(fake.file));
+ cache.checkedAt=Date.now()-300001;writeFileSync(file,JSON.stringify(cache));
+ result=cli('bridge',['--claude',fake.file],payload(),{...env,USAGESCOPE_FAKE_OUTPUT:'{"subscriptionType":"pro"}'});assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),2);assert.equal(newest(dir).payload.subscription_type,'pro');
+});
+
+test('subscription cache isolates profiles sharing runtime and never stores raw auth output',()=>{
+ const fake=fakeClaude(),dir=runtime(),other=config();const env={...fake.env,XDG_RUNTIME_DIR:dir};
+ assert.equal(cli('bridge',['--claude',fake.file],payload('profile-a'),env).status,0);
+ const result=cli('bridge',['--claude',fake.file],payload('profile-b'),{...env,CLAUDE_CONFIG_DIR:other,USAGESCOPE_FAKE_EXPECT_PROFILE:other,USAGESCOPE_FAKE_OUTPUT:'{"subscriptionType":"pro","email":"SECRET_OTHER_EMAIL"}'});
+ assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),2);assert.equal(newest(dir).payload.subscription_type,'pro');assert.equal(planCaches(dir).length,2);
+ for(const file of readdirSync(join(dir,'usagescope-gnome'))){const text=readFileSync(join(dir,'usagescope-gnome',file),'utf8');assert.ok(!text.includes('SECRET'));assert.ok(!text.includes(fake.env.CLAUDE_CONFIG_DIR));assert.ok(!text.includes(other));}
+});
+
+test('malformed, oversized, failed and timed out subscription probes keep quotas and cache unknown',()=>{
+ for(const extra of [
+  {USAGESCOPE_FAKE_OUTPUT:'SECRET_MALFORMED'},
+  {USAGESCOPE_FAKE_OUTPUT:'{"subscriptionType":"pro","extra":"'+'x'.repeat(65536)+'"}'},
+  {USAGESCOPE_FAKE_OUTPUT:'{"subscriptionType":"new-plan","model":{"id":"max"}}'},
+  {USAGESCOPE_FAKE_OUTPUT:'{"subscriptionType":"pro"}',USAGESCOPE_FAKE_EXIT:'1'},
+  {USAGESCOPE_FAKE_HANG:'1'},
+ ]){
+  const fake=fakeClaude(),dir=runtime(),env={...fake.env,...extra,XDG_RUNTIME_DIR:dir};const start=Date.now();
+  const result=cli('bridge',['--claude',fake.file],payload(),env);assert.equal(result.status,0,result.stderr);assert.ok(Date.now()-start<4500,'probe deadline must remain bounded');assert.equal(result.stderr,'');assert.equal(result.stdout,'');
+  assert.equal(newest(dir).payload.subscription_type,undefined);assert.equal(newest(dir).payload.rate_limits.five_hour.used_percentage,23);assert.equal(fake.count(),1);
+  assert.equal(cli('bridge',['--claude',fake.file],payload(),env).status,0);assert.equal(fake.count(),1,'unknown results also cache');
+ }
+});
+
+test('subscription cache rejects symlinks and revalidates CLI trust even on cache hits',()=>{
+ const fake=fakeClaude(),dir=runtime(),env={...fake.env,XDG_RUNTIME_DIR:dir};assert.equal(cli('bridge',['--claude',fake.file],payload(),env).status,0);
+ chmodSync(fake.file,0o777);let result=cli('bridge',['--claude',fake.file],payload(),env);assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),1);assert.equal(newest(dir).payload.subscription_type,undefined);
+ chmodSync(fake.file,0o700);const file=join(dir,'usagescope-gnome',planCaches(dir)[0]);const target=join(config(),'keep');writeFileSync(target,'SECRET_UNTOUCHED',{mode:0o600});rmSync(file);symlinkSync(target,file);
+ result=cli('bridge',['--claude',fake.file],payload(),env);assert.equal(result.status,0,result.stderr);assert.equal(newest(dir).payload.subscription_type,undefined);assert.equal(readFileSync(target,'utf8'),'SECRET_UNTOUCHED');assert.equal(fake.count(),1);
+});
+
+test('setup embeds a discovered canonical Claude path without probing and supports explicit --claude with renderer',()=>{
+ const fake=fakeClaude(),bin=config();const alias=join(bin,'claude');symlinkSync(fake.file,alias);const dir=config('{}');const env={...fake.env,CLAUDE_CONFIG_DIR:dir,USAGESCOPE_FAKE_EXPECT_PROFILE:dir,PATH:`${bin}:/usr/bin:/bin`};
+ let result=cli('setup',['--preview'],'',env);assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),0);assert.deepEqual(readdirSync(dir),['settings.json']);
+ result=cli('setup',['--apply'],'',env);assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),0);
+ const settings=JSON.parse(readFileSync(join(dir,'settings.json'),'utf8'));const run=spawnSync('/bin/sh',['-c',settings.statusLine.command],{input:payload(),encoding:'utf8',timeout:10000,env:{...process.env,...env,XDG_RUNTIME_DIR:runtime()}});assert.equal(run.status,0,run.stderr);assert.equal(fake.count(),1);
+ const wrapper=readFileSync(join(dir,'.usagescope-setup','statusline'),'utf8');assert.ok(wrapper.includes(JSON.stringify(realpathSync(fake.file))));assert.ok(!wrapper.includes(JSON.stringify(alias)));
+ const other=config();const exe=renderer(other);writeFileSync(join(other,'settings.json'),JSON.stringify({statusLine:{type:'command',command:exe}}),{mode:0o600});
+ result=cli('setup',['--apply','--renderer',exe,'--claude',fake.file],'',{CLAUDE_CONFIG_DIR:other});assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),1);
+ chmodSync(fake.file,0o777);const bad=config('{}');result=cli('setup',['--apply','--claude',fake.file],'',{CLAUDE_CONFIG_DIR:bad});assert.notEqual(result.status,0);assert.deepEqual(readdirSync(bad),['settings.json']);
+});
+
+test('cache corruption, future timestamps and CLI changes are misses while quotas and renderer remain usable',()=>{
+ const fake=fakeClaude(),dir=runtime(),env={...fake.env,XDG_RUNTIME_DIR:dir};
+ assert.equal(cli('bridge',['--claude',fake.file],payload(),env).status,0);
+ const file=join(dir,'usagescope-gnome',planCaches(dir)[0]);
+ for(const corrupt of [()=>'{"planType":"pro"',cache=>JSON.stringify({...cache,checkedAt:Date.now()+600000}),cache=>JSON.stringify({...cache,planType:'SECRET_BAD_CACHE'})]){
+  const cache=JSON.parse(readFileSync(file,'utf8'));writeFileSync(file,corrupt(cache));const before=fake.count();
+  const result=cli('bridge',['--claude',fake.file],payload(),env);assert.equal(result.status,0,result.stderr);assert.equal(fake.count(),before+1);assert.equal(newest(dir).payload.subscription_type,'max');
+ }
+ const other=fakeClaude();const result=cli('bridge',['--claude',other.file,'--renderer',renderer(config())],payload(),{...other.env,CLAUDE_CONFIG_DIR:fake.env.CLAUDE_CONFIG_DIR,USAGESCOPE_FAKE_EXPECT_PROFILE:fake.env.CLAUDE_CONFIG_DIR,XDG_RUNTIME_DIR:dir,USAGESCOPE_FAKE_OUTPUT:'{"subscriptionType":"pro"}'});
+ assert.equal(result.status,0,result.stderr);assert.equal(result.stdout,'A\0B\n');assert.equal(result.stderr,'');assert.equal(other.count(),1);assert.equal(newest(dir).payload.subscription_type,'pro');
+});
+
+test('CLI path tampering through writable directories stays unknown without running the CLI',()=>{
+ const fake=fakeClaude(),dir=runtime(),env={...fake.env,XDG_RUNTIME_DIR:dir};assert.equal(cli('bridge',['--claude',fake.file],payload(),env).status,0);
+ const parent=resolve(fake.file,'..');chmodSync(parent,0o777);const alias=join(config(),'claude');symlinkSync(fake.file,alias);
+ for(const file of [fake.file,alias]){const result=cli('bridge',['--claude',file],payload(),env);assert.equal(result.status,0,result.stderr);assert.equal(newest(dir).payload.subscription_type,undefined);assert.equal(fake.count(),1);}
+ const setup=config('{}');const result=cli('setup',['--apply'],'',{CLAUDE_CONFIG_DIR:setup,PATH:`${parent}:/usr/bin:/bin`});assert.notEqual(result.status,0);assert.deepEqual(readdirSync(setup),['settings.json']);
+});
+
+test('profile hashing never merges paths whose dot segments traverse a symlink',()=>{
+ const fake=fakeClaude(),dir=runtime(),base=config(),far=config();mkdirSync(join(far,'inner'));mkdirSync(join(far,'profile'));mkdirSync(join(base,'profile'));symlinkSync(join(far,'inner'),join(base,'link'));
+ const first=join(base,'profile'),second=`${base}/link/../profile`;
+ const invoke=(profile,plan)=>cli('bridge',['--claude',fake.file],payload(),{...fake.env,CLAUDE_CONFIG_DIR:profile,USAGESCOPE_FAKE_EXPECT_PROFILE:profile,USAGESCOPE_FAKE_OUTPUT:JSON.stringify({subscriptionType:plan}),XDG_RUNTIME_DIR:dir});
+ assert.equal(invoke(first,'max').status,0);const result=invoke(second,'pro');assert.equal(result.status,0,result.stderr);assert.equal(newest(dir).payload.subscription_type,'pro');assert.equal(fake.count(),2);assert.equal(planCaches(dir).length,2);
+});
+
+test('concurrent profile cache publication keeps the private runtime inventory bounded',async()=>{
+ const fake=fakeClaude(),dir=runtime();const profiles=Array.from({length:20},()=>config());
+ const directory=join(dir,'usagescope-gnome');mkdirSync(directory,{mode:0o700});
+ for(let i=0;i<16;i++){
+  const sourceId=createHash('sha256').update(i===0?'cache-bound':`seed-source-${i}`).digest('hex');
+  for(let j=1;j<=2;j++){const order=i*2+j;writeFileSync(join(directory,`s-${sourceId}-${String(order).padStart(16,'0')}-00000000-0000-4000-8000-000000000000.json`),JSON.stringify({version:1,sourceId,order,receivedAt:Date.now(),payload:{rate_limits:{five_hour:{used_percentage:40}}}}),{mode:0o600});}
+ }
+ for(let i=0;i<15;i++)writeFileSync(join(directory,`p-${createHash('sha256').update(`seed-profile-${i}`).digest('hex')}.json`),JSON.stringify({version:1,checkedAt:Date.now(),planType:null,executableId:'0'.repeat(64)}),{mode:0o600});
+ const results=await Promise.all(profiles.map(profile=>new Promise(resolve=>{
+  const child=spawn('/usr/bin/gjs',['-m',join(build,'claude/bridge.js'),'--claude',fake.file],{env:{...process.env,...fake.env,CLAUDE_CONFIG_DIR:profile,USAGESCOPE_FAKE_EXPECT_PROFILE:profile,USAGESCOPE_FAKE_DELAY_MS:'1000',XDG_RUNTIME_DIR:dir},stdio:['pipe','ignore','ignore']});child.on('close',resolve);child.stdin.end(payload('cache-bound'));
+ })));
+ assert.deepEqual(results,Array(20).fill(0));assert.ok(planCaches(dir).length<=16,'concurrent profiles must not grow past cache capacity');assert.ok(!readdirSync(directory).some(name=>name.includes('lock')||name.startsWith('.pending-')));
+ const result=cli('bridge',[],payload('cache-bound',42),{XDG_RUNTIME_DIR:dir});assert.equal(result.status,0,result.stderr);assert.equal(newest(dir).payload.rate_limits.five_hour.used_percentage,42);assert.equal(snapshots(dir).length,32);assert.ok(readdirSync(directory).length<=48);
 });

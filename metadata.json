@@ -2,8 +2,10 @@
   "uuid": "usagescope-gnome@ijustsea.github.io",
   "name": "UsageScope",
   "description": "Local Codex and Claude quota monitoring with explicit opt-in and source-aware snapshots.",
-  "shell-version": ["51"],
+  "shell-version": [
+    "51"
+  ],
   "settings-schema": "org.gnome.shell.extensions.usagescope",
-  "version": 1,
+  "version": 2,
   "url": "https://github.com/ijustsea/usagescope-gnome"
 }

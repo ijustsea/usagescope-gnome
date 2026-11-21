@@ -8,6 +8,7 @@ import {ClaudeController} from './claude/controller.js';
 import type {ProviderId, ProviderView} from './core/types.js';
 import {UsageIndicator} from './ui/indicator.js';
 import {LowQuotaAlerts, nextUiDeadline, plainText} from './ui/model.js';
+import {websiteUrl} from './core/policy.js';
 
 function disabled(): ProviderView {
     return {status: 'disabled', snapshot: null, message: 'Monitoring off; CLI sign-in is unchanged.'};
@@ -32,7 +33,8 @@ export default class UsageScopeExtension extends Extension {
     private cancelingLogin = false;
     private claudeSource: string | null = null;
     private browserLaunches = new Set<Gio.Cancellable>();
-    private alerts = new LowQuotaAlerts();
+    private websiteLaunches = new Set<Gio.Cancellable>();
+    private alerts: Record<ProviderId, LowQuotaAlerts> = {codex: new LowQuotaAlerts('codex'), claude: new LowQuotaAlerts('claude')};
     private notificationSource: MessageTray.Source | null = null;
 
     override enable(): void {
@@ -42,6 +44,7 @@ export default class UsageScopeExtension extends Extension {
             this.settings = this.getSettings();
             this.indicator = new UsageIndicator({
                 setEnabled: (provider, enabled) => this.settings?.set_boolean(`enable-${provider}`, enabled),
+                openWebsite: provider => this.openWebsite(provider),
                 connectCodex: () => this.connectCodex(),
                 refreshCodex: () => {void this.runCodex('refresh');},
                 cancelLogin: () => {void this.cancelLogin();},
@@ -88,9 +91,9 @@ export default class UsageScopeExtension extends Extension {
             this.views[provider] = view;
             if (provider === 'codex') {
                 if (!this.busy.codex && view.status !== 'loading') this.login = false;
-                const crossed = this.alerts.observe(view);
-                if (crossed.length) this.notifyLow(crossed.map(window => window.label));
             }
+            const crossed = this.alerts[provider].observe(view);
+            if (crossed.length) this.notifyLow(provider, crossed.map(window => window.label));
             this.render();
         };
         try {
@@ -118,6 +121,7 @@ export default class UsageScopeExtension extends Extension {
 
     private stopProvider(provider: ProviderId): void {
         ++this.generations[provider];
+        this.alerts[provider].clear();
         this.busy[provider] = false;
         if (provider === 'codex') {
             const controller = this.codex;
@@ -125,12 +129,9 @@ export default class UsageScopeExtension extends Extension {
             this.login = false;
             this.loginAttempt = null;
             this.cancelingLogin = false;
-            this.alerts.clear();
             for (const cancellable of this.browserLaunches) cancellable.cancel();
             this.browserLaunches.clear();
             controller?.stop();
-            this.notificationSource?.destroy(MessageTray.NotificationDestroyedReason.SOURCE_CLOSED);
-            this.notificationSource = null;
         } else {
             const controller = this.claude;
             this.claude = null;
@@ -246,7 +247,23 @@ export default class UsageScopeExtension extends Extension {
         });
     }
 
-    private notifyLow(labels: string[]): void {
+    private openWebsite(provider: ProviderId): void {
+        if (!this.active) return;
+        const uri = websiteUrl(provider);
+        const cancellable = new Gio.Cancellable();
+        this.websiteLaunches.add(cancellable);
+        Gio.AppInfo.launch_default_for_uri_async(uri, null, cancellable, (_source, result) => {
+            this.websiteLaunches.delete(cancellable);
+            try { Gio.AppInfo.launch_default_for_uri_finish(result); }
+            catch {
+                if (!this.active || cancellable.is_cancelled()) return;
+                this.views[provider] = {...this.views[provider], message: '기본 브라우저에서 공식 페이지를 열 수 없습니다.'};
+                this.render();
+            }
+        });
+    }
+
+    private notifyLow(provider: ProviderId, labels: string[]): void {
         if (!this.active) return;
         if (!this.notificationSource) {
             const source = new MessageTray.Source({title: 'UsageScope', iconName: 'utilities-system-monitor-symbolic'});
@@ -257,8 +274,8 @@ export default class UsageScopeExtension extends Extension {
             Main.messageTray.add(source);
         }
         this.notificationSource.addNotification(new MessageTray.Notification({
-            source: this.notificationSource, title: 'Codex quota below 20%',
-            body: plainText(`${labels.slice(0, 4).join(', ')} remaining quota fell below 20%.`, 240),
+            source: this.notificationSource, title: `${provider === 'codex' ? 'ChatGPT' : 'Claude'} 잔여량 30% 미만`,
+            body: plainText(`${labels.slice(0, 4).join(', ')} ${provider === 'claude' ? '마지막 보고' : '조회'} 잔여량이 30% 아래로 내려갔습니다.`, 240),
             useBodyMarkup: false, isTransient: true, privacyScope: MessageTray.PrivacyScope.USER,
             urgency: MessageTray.Urgency.NORMAL,
         }));
@@ -301,6 +318,10 @@ export default class UsageScopeExtension extends Extension {
         this.settingsSignal = 0;
         this.stopProvider('codex');
         this.stopProvider('claude');
+        for (const cancellable of this.websiteLaunches) cancellable.cancel();
+        this.websiteLaunches.clear();
+        this.notificationSource?.destroy(MessageTray.NotificationDestroyedReason.SOURCE_CLOSED);
+        this.notificationSource = null;
         this.enabled = {codex: false, claude: false};
         this.claudeSource = null;
         this.indicator?.destroy();
