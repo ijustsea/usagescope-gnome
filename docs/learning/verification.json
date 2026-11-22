@@ -1,0 +1,16 @@
+{
+  "date": "2026-11-21",
+  "version": "0.2.1",
+  "sourceCommit": "0129b2e94058dfdb0cf15e9407ffc68c1f5ae9ed",
+  "nodeTests": 66,
+  "nodeFailures": 0,
+  "gjsSuites": ["claude", "codex"],
+  "gjsFatalCriticals": true,
+  "shell": {"version": "51.1", "monitor": "1024x480", "popup": "354x365", "passed": true},
+  "liveCodexQuotaProbe": {"passed": true, "modelTurn": false, "elapsedMs": 354, "pssKiB": 81566, "measurement": "single observation, not a comparative benchmark"},
+  "knownNpmAdvisories": 0,
+  "archiveSha256": "410f9d87e2936da99437d8cec193f1d80661109390f383ae3005a709d325609e",
+  "independentReview": "Three Claude findings reproduced and closed in scoped temporary fixtures; additional analysis interrupted by an automatic security filter and not retried. Codex transport and whole-project integration verified by implementer.",
+  "notExercised": ["real browser reauthentication", "applying or restoring real user Claude settings", "replacing the primary desktop extension"],
+  "limits": ["same-user malicious code", "vendor/compiler/toolchain trust", "passive Claude server freshness", "no complete malware or vulnerability clearance"]
+}
