@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {LowQuotaAlerts, nextUiDeadline, plainText, receiptAge, quotaRows, cardStatus, resetCountdown} from '../../build/ui/model.js';
-import {panelText} from '../../build/core/format.js';
+import {panelText, isHistorical} from '../../build/core/format.js';
 import {parseClaudeCliUsage} from '../../build/core/normalize.js';
 import {ProviderState} from '../../build/core/state.js';
 
@@ -94,7 +94,7 @@ test('both providers label polled quota the same way, keeping loading and failur
     state.accept(parseClaudeCliUsage({
         rate_limits_available: true, rate_limits: {five_hour: {utilization: 40, resets_at: null}}, subscription_type: 'team',
     }, 'cli-test', now - 60_000));
-    assert.equal(cardStatus(state.loading(), now), '이전 조회 · 1분 전');
+    assert.equal(cardStatus(state.loading(), now), '업데이트 · 1분 전');
     for (const status of ['error', 'unavailable']) {
         assert.equal(cardStatus(state.fail('Unavailable', status), now), '이전 조회 · 1분 전');
     }
@@ -192,4 +192,31 @@ test('both providers expose the countdown on quota rows, but not for unknown or 
         view.snapshot.windows[0].resetsAt = now / 1000;
         assert.equal(quotaRows(view, now)[0].resetIn, '');
     }
+});
+
+test('a read in progress keeps the panel, card label and opacity steady', () => {
+    for (const provider of ['codex', 'claude']) {
+        const ready = sample(50, 1, {provider});
+        const loading = {...ready, status: 'loading'};
+        assert.equal(panelText(loading, now), panelText(ready, now), 'no ~ appears while refreshing');
+        assert.equal(cardStatus(loading, now), cardStatus(ready, now));
+        assert.equal(isHistorical(loading, now), false);
+        const empty = sample(50, 1, {provider, windows: []});
+        assert.equal(cardStatus({...empty, status: 'loading'}, now), '한도 정보 미제공');
+    }
+    const limited = sample(50, 1, {allowed: false});
+    assert.equal(cardStatus({...limited, status: 'loading'}, now), cardStatus(limited, now));
+});
+test('only failures and six-minute-old values are marked as earlier values', () => {
+    const ready = sample(50, 1);
+    for (const status of ['error', 'auth-required', 'unavailable', 'waiting']) {
+        assert.equal(isHistorical({...ready, status}, now), true, status);
+        assert.match(panelText({...ready, status}, now), /^~/);
+    }
+    assert.equal(isHistorical(ready, now + 360_000), false);
+    for (const status of ['ready', 'loading']) {
+        assert.equal(isHistorical({...ready, status}, now + 360_002), true, status + ' after six minutes');
+        assert.match(panelText({...ready, status}, now + 360_002), /^~/);
+    }
+    assert.equal(isHistorical({status: 'error', snapshot: null, message: ''}, now), false);
 });

@@ -13,6 +13,20 @@ UsageScopeExtension.prototype.enable = function () {
         extension.indicator.button.menu.open();
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
           void (async () => {
+            // The real top-bar label must not change while a read with unchanged values is in progress.
+            const panel = extension.indicator.panelLabel;
+            const panelTexts = new Set([panel.get_text()]);
+            let sawLoading = false;
+            void extension.refresh('codex'); void extension.refresh('claude');
+            for (let i = 0; i < 300; i++) {
+                panelTexts.add(panel.get_text());
+                if (extension.views.codex.status === 'loading' || extension.views.claude.status === 'loading') sawLoading = true;
+                if (sawLoading && extension.views.codex.status === 'ready' && extension.views.claude.status === 'ready') break;
+                await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => { resolve(); return GLib.SOURCE_REMOVE; }));
+            }
+            panelTexts.add(panel.get_text());
+            // Let the refresh's queued relayout run before measuring geometry below.
+            await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => { resolve(); return GLib.SOURCE_REMOVE; }));
             const actor = extension.indicator.button.menu.actor;
             const [x, y] = actor.get_transformed_position();
             const bars = [], text = [], plans = [];
@@ -52,7 +66,7 @@ UsageScopeExtension.prototype.enable = function () {
                 for(const child of item.get_children())visitRows(child);
             };
             visitRows(actor);
-            const report = {x,y,width:actor.width,height:actor.height,stageHeight:global.stage.height,
+            const report = {refreshPanel: {texts: [...panelTexts], sawLoading}, x,y,width:actor.width,height:actor.height,stageHeight:global.stage.height,
                 bars:bars.map(bar=>({...bar})),text:[...text],plans:[...plans],rows};
             const cardCapture=GLib.getenv('USAGESCOPE_UI_CARD_CAPTURE');
             if(cardCapture)await new Promise(resolve=>{
