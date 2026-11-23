@@ -7,12 +7,9 @@ export function websiteUrl(provider:unknown):string {
  if(provider==='claude')return 'https://claude.ai/login';
  throw new Error('Unknown provider');
 }
-const METHODS=new Set(['initialize','account/read','account/rateLimits/read','account/login/start','account/login/cancel']);
+// Read-only quota access. Sign-in stays in the official CLI's own terminal command.
+const METHODS=new Set(['initialize','account/read','account/rateLimits/read']);
 export function rpcAllowed(method:string):boolean {return METHODS.has(method);}
-export function validateAuthUrl(uri:unknown):string {
- if(typeof uri!=='string'||uri.length>16384||!/^https:\/\/(?:auth\.openai\.com|chatgpt\.com)(?::443)?(?:[/?#][^\s\\]*)?$/i.test(uri)||/[\u0000-\u0020\u007f\\]/.test(uri)) throw new Error('Untrusted authentication URL');
- return uri;
-}
 export function validateExecutable(path:unknown):string {
  if(typeof path!=='string'||!/^\/(?:[^\s\u0000-\u001f;|`$<>])*$/u.test(path)||path.length>4096||path==='/'||path.includes('/../')) throw new Error('Choose an absolute CLI executable path without shell syntax');
  return path;

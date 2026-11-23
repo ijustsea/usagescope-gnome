@@ -1,11 +1,11 @@
 {
   "uuid": "usagescope-gnome@ijustsea.github.io",
   "name": "UsageScope",
-  "description": "Local Codex and Claude quota monitoring with explicit opt-in and source-aware snapshots.",
+  "description": "Read-only ChatGPT (Codex CLI) and Claude CLI quota monitoring with explicit opt-in.",
   "shell-version": [
     "51"
   ],
   "settings-schema": "org.gnome.shell.extensions.usagescope",
-  "version": 5,
+  "version": 6,
   "url": "https://github.com/ijustsea/usagescope-gnome"
 }

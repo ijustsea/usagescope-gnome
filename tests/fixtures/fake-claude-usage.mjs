@@ -7,6 +7,7 @@ for(const flag of ['--no-session-persistence','--strict-mcp-config','--disable-s
 for(const [flag,value]of [['--input-format','stream-json'],['--output-format','stream-json'],['--setting-sources',''],['--tools','']])if(args[args.indexOf(flag)+1]!==value)throw Error('unsafe fixture argument');
 if(JSON.parse(args[args.indexOf('--settings')+1]).disableAllHooks!==true)throw Error('hooks must be disabled');
 if(process.cwd()!=='/')throw Error('neutral working directory required');
+if(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC!=='1')throw Error('non-essential CLI traffic must be disabled');
 if(process.env.USAGESCOPE_CLAUDE_TEST_PID)writeFileSync(process.env.USAGESCOPE_CLAUDE_TEST_PID,String(process.pid));
 const input=createInterface({input:process.stdin});
 input.on('close',()=>{if(mode==='stubborn')setInterval(()=>{},1000);});
@@ -25,7 +26,7 @@ input.on('line',line=>{
  if(mode==='permission'){console.log(JSON.stringify({type:'control_request',request_id:'foreign',request:{subtype:'can_use_tool'}}));return;}
  let value;
  if(m.request.subtype==='initialize'){
-  initialized=true;value={account:mode==='unknown-account'?{}:{email:'fixture@example.test',organization:'fixture-org',subscriptionType:'team'}};
+  initialized=true;value={account:mode==='signed-out'?{apiProvider:'firstParty',tokenSource:'none'}:mode==='unknown-account'?{}:{email:'fixture@example.test',organization:'fixture-org',subscriptionType:'team'}};
  }else{
   if(!initialized||m.request.skip_behaviors!==true)throw Error('usage must skip transcript scanning');
   value={subscription_type:'team',session:{model_usage:{}},rate_limits_available:mode!=='unavailable',rate_limits:mode==='unavailable'?null:{five_hour:{utilization:0,resets_at:'2030-01-01T00:00:00.947265+00:00'},seven_day:{utilization:38,resets_at:null}}};

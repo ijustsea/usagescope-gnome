@@ -54,7 +54,7 @@ UsageScopeExtension.prototype.enable = function () {
             report.settings.controls=[];
             const controls=item=>{
                 const title=typeof item.get_text==='function'?item.get_text().replace(/ [▸▾]$/u,''):'';
-                if(item.mapped&&['Refresh','CLI 연결 및 설정','조회 간격'].includes(title)){
+                if(item.mapped&&['Refresh','15초','1시간'].includes(title)){
                     const [,controlY]=item.get_transformed_position();
                     if(!report.settings.controls.some(control=>control.text===title))
                         report.settings.controls.push({text:title,y:controlY,height:item.height});
@@ -70,56 +70,41 @@ UsageScopeExtension.prototype.enable = function () {
                     try{screenshot.screenshot_area_finish(result);}finally{output.close(null);resolve();}
                 });
             });
-            const connection=extension.indicator.connection;
-            connection.button.emit('clicked',1);
-            if(!settings.menu.isOpen||!connection.isOpen)throw Error('Connection section closed its settings parent');
-            const passive=extension.indicator.passiveSetup;
-            passive.button.emit('clicked',1);
-            if(!settings.menu.isOpen||!connection.isOpen||!passive.isOpen)throw Error('Statusline section closed an ancestor');
-            const copy=passive.section._getMenuItems().find(item=>item.label?.text==='Claude 미리보기 명령 복사');
-            copy.emit('activate',null);
-            const copied=await new Promise(resolve=>St.Clipboard.get_default().get_text(St.ClipboardType.CLIPBOARD,(_clipboard,value)=>resolve(value)));
-            report.copyPreviewCorrect=typeof copied==='string'&&copied.startsWith('gjs -m ')&&copied.includes(extension.path+'/claude/setup.js')&&copied.endsWith(' --preview');
-            passive.close();connection.close();
-            extension.indicator.button.menu.open();settings.menu.open();
-            const mode=settings.menu._getMenuItems().find(item=>item.label?.text==='Claude CLI 조회 (실험)');
-            mode.emit('toggled',true);
+            settings.menu.close();await pause(300);
             for(let i=0;i<100&&!(extension.views.claude.status==='ready'&&extension.views.claude.snapshot?.planType==='team');i++)await pause(50);
             report.cli={status:extension.views.claude.status,plan:extension.views.claude.snapshot?.planType,
                 windows:extension.views.claude.snapshot?.windows.length,
                 independentSource:extension.views.claude.snapshot?.sourceId.startsWith('claude-cli-')};
-            settings.menu.close();await pause(300);
+            extension.indicator.button.menu.open();await pause(300);
             bars.length=0;text.length=0;walk(actor);report.cli.bars=bars.map(bar=>({...bar}));
-            settings.menu.open();
-            const polling=extension.indicator.polling;
-            polling.button.grab_key_focus();
-            const focusColor=polling.button.get_theme_node().get_background_color();
-            const focus={owned:global.stage.get_key_focus()===polling.button,alpha:focusColor.alpha};
-            polling.button.emit('clicked',1);
-            const choices=polling.section._getMenuItems().map(item=>item.label?.text);
-            const fast=polling.section._getMenuItems().find(item=>item.label?.text==='15초');
-            if(!fast)throw Error('15-second choice missing');
-            const standard=polling.section._getMenuItems().find(item=>item.label?.text==='1분 (기본)');
+            settings.menu.open();await pause(300);
+            const intervals=extension.indicator.intervals;
+            const fast=intervals.get(15),standard=intervals.get(60);
+            if(!fast||!standard)throw Error('Interval choices missing');
+            const choices=[...intervals.values()].map(choice=>choice.label);
+            const defaultChecked=standard.checked&&[...intervals.values()].filter(choice=>choice.checked).length===1;
+            fast.grab_key_focus();
+            const focusColor=fast.get_theme_node().get_border_color(St.Side.TOP);
+            const focus={owned:global.stage.get_key_focus()===fast,alpha:focusColor.alpha};
             const visible=item=>{
                 if(!item?.mapped)return false;
                 const [,rowY]=item.get_transformed_position(),[,top]=actor.get_transformed_position();
                 return rowY>=top&&rowY+item.height<=top+actor.height;
             };
-            // Parent expansion is 250ms and scroll animation another 100ms.
-            // Wait on the actual visible result, with a bounded UI deadline.
-            for(let i=0;i<40&&!(visible(fast)&&visible(standard));i++)await pause(25);
-            const [,fastY]=fast.get_transformed_position();const [,popupY]=actor.get_transformed_position();
-            const fastVisible=visible(fast)&&visible(standard);
-            const fastGeometry={fastY,popupY,popupHeight:actor.height,fastHeight:fast.height,
-                adjustment:extension.indicator.scroll.vadjustment.get_values(),idle:extension.indicator.scrollIdle,
-                defaultMapped:polling.section._getMenuItems().find(item=>item.label?.text==='1분 (기본)')?.mapped};
+            const fastVisible=[...intervals.values()].every(visible);
+            const adjustment=extension.indicator.scroll.vadjustment;
+            const expanded={upper:adjustment.upper,page:adjustment.page_size,stageHeight:global.stage.height};
             const previousCodex=extension.codex,previousClaude=extension.claude;
-            fast.emit('activate',null);
+            fast.emit('clicked',1);
+            // Read before any reopen below, so a click that closed Settings is caught.
+            const stillOpen=settings.menu.isOpen&&extension.indicator.button.menu.isOpen;
             for(let i=0;i<100&&!(extension.codex!==previousCodex&&extension.claude!==previousClaude&&extension.views.codex.status==='ready'&&extension.views.claude.status==='ready');i++)await pause(50);
-            extension.indicator.button.menu.open();settings.menu.open();polling.open();await pause(300);
-            report.fast={choices,visible:fastVisible,geometry:fastGeometry,focus,pollSeconds:extension.settings.get_int('poll-seconds'),label:extension.indicator.pollLabel.label.get_text(),
+            extension.indicator.button.menu.open();settings.menu.open();await pause(300);
+            report.fast={choices,visible:fastVisible,expanded,focus,defaultChecked,pollSeconds:extension.settings.get_int('poll-seconds'),
+                checked:[...intervals.values()].filter(choice=>choice.checked).map(choice=>choice.label),
+                stillOpen,
                 controllersReplaced:extension.codex!==previousCodex&&extension.claude!==previousClaude};
-            polling.close();settings.menu.close();await pause(300);
+            settings.menu.close();await pause(300);
             bars.length=0;text.length=0;plans.length=0;walk(actor);report.fast.plans=[...plans];
             const save = () => Gio.File.new_for_path(reportPath).replace_contents(
                 new TextEncoder().encode(JSON.stringify(report)),null,false,Gio.FileCreateFlags.PRIVATE,null);

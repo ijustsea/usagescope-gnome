@@ -4,7 +4,6 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import {CodexController} from './codex/controller.js';
-import {ClaudeController} from './claude/controller.js';
 import {ClaudeCliController} from './claude/cli.js';
 import type {ProviderId, ProviderView} from './core/types.js';
 import {UsageIndicator} from './ui/indicator.js';
@@ -15,6 +14,11 @@ function disabled(): ProviderView {
     return {status: 'disabled', snapshot: null, message: 'Monitoring off; CLI sign-in is unchanged.'};
 }
 
+const CLI: Record<ProviderId, {key: 'codex-path' | 'claude-path'; name: string}> = {
+    codex: {key: 'codex-path', name: 'codex'},
+    claude: {key: 'claude-path', name: 'claude'},
+};
+
 export default class UsageScopeExtension extends Extension {
     private active = false;
     private settings: Gio.Settings | null = null;
@@ -24,16 +28,11 @@ export default class UsageScopeExtension extends Extension {
     private menuOpen = false;
     private indicator: UsageIndicator | null = null;
     private codex: CodexController | null = null;
-    private claude: ClaudeController | ClaudeCliController | null = null;
+    private claude: ClaudeCliController | null = null;
     private generations: Record<ProviderId, number> = {codex: 0, claude: 0};
     private views: Record<ProviderId, ProviderView> = {codex: disabled(), claude: disabled()};
     private enabled: Record<ProviderId, boolean> = {codex: false, claude: false};
     private busy: Record<ProviderId, boolean> = {codex: false, claude: false};
-    private login = false;
-    private loginAttempt: Promise<void> | null = null;
-    private cancelingLogin = false;
-    private claudeSource: string | null = null;
-    private browserLaunches = new Set<Gio.Cancellable>();
     private websiteLaunches = new Set<Gio.Cancellable>();
     private alerts: Record<ProviderId, LowQuotaAlerts> = {codex: new LowQuotaAlerts('codex'), claude: new LowQuotaAlerts('claude')};
     private notificationSource: MessageTray.Source | null = null;
@@ -45,33 +44,23 @@ export default class UsageScopeExtension extends Extension {
             this.settings = this.getSettings();
             this.indicator = new UsageIndicator({
                 setEnabled: (provider, enabled) => this.settings?.set_boolean(`enable-${provider}`, enabled),
-                setClaudeCliMode: enabled => this.settings?.set_boolean('claude-cli-mode', enabled),
                 openWebsite: provider => this.openWebsite(provider),
-                connectCodex: () => this.connectCodex(),
-                refreshCodex: () => {void this.runCodex('refresh');},
-                cancelLogin: () => {void this.cancelLogin();},
-                refreshClaude: () => {void this.runClaude('refresh');},
-                selectClaudeSource: id => {void this.runClaude('select', id);},
+                refresh: () => {void this.refresh('codex'); void this.refresh('claude');},
                 setPollSeconds: seconds => this.settings?.set_int('poll-seconds', seconds),
-                setCodexPath: path => this.settings?.set_string('codex-path', path),
                 menuStateChanged: open => {this.menuOpen = open; this.render();},
-            }, this.path);
+            });
             Main.panel.addToStatusArea(this.uuid, this.indicator.button);
             this.settingsSignal = this.settings.connect('changed', (_settings, key: string) => {
                 if (!this.active) return;
-                if (key === 'enable-codex' || key === 'enable-claude') {
-                    const provider = key === 'enable-codex' ? 'codex' : 'claude';
-                    this.reconcile(provider);
-                } else if (key === 'codex-path' || key === 'poll-seconds') {
-                    this.stopProvider('codex');
-                    this.reconcile('codex');
-                    if (key === 'poll-seconds' && this.settings?.get_boolean('claude-cli-mode')) {
-                        this.stopProvider('claude');
-                        this.reconcile('claude');
+                if (key === 'enable-codex') this.reconcile('codex');
+                else if (key === 'enable-claude') this.reconcile('claude');
+                else {
+                    const restart: ProviderId[] = key === 'codex-path' ? ['codex'] : key === 'claude-path' ? ['claude']
+                        : key === 'poll-seconds' ? ['codex', 'claude'] : [];
+                    for (const provider of restart) {
+                        this.stopProvider(provider);
+                        this.reconcile(provider);
                     }
-                } else if (key === 'claude-cli-mode' || key === 'claude-path') {
-                    this.stopProvider('claude');
-                    this.reconcile('claude');
                 }
                 this.render();
             });
@@ -82,6 +71,17 @@ export default class UsageScopeExtension extends Extension {
             this.disable();
             throw error;
         }
+    }
+
+    /** A configured absolute path wins; otherwise PATH, then the official native install location. */
+    private executable(provider: ProviderId): string | null {
+        const {key, name} = CLI[provider];
+        const configured = this.settings?.get_string(key) ?? '';
+        if (configured.length > 4096 || (configured && !GLib.path_is_absolute(configured))) return null;
+        const native = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', name]);
+        const found = configured ? GLib.find_program_in_path(configured)
+            : GLib.find_program_in_path(name) ?? (GLib.file_test(native, GLib.FileTest.IS_EXECUTABLE) ? native : null);
+        return found && GLib.file_test(found, GLib.FileTest.IS_REGULAR) ? found : null;
     }
 
     private reconcile(provider: ProviderId): void {
@@ -98,39 +98,23 @@ export default class UsageScopeExtension extends Extension {
         const publish = (view: ProviderView) => {
             if (!this.active || this.generations[provider] !== generation) return;
             this.views[provider] = view;
-            if (provider === 'codex') {
-                if (!this.busy.codex && view.status !== 'loading') this.login = false;
-            }
             const crossed = this.alerts[provider].observe(view);
             if (crossed.length) this.notifyLow(provider, crossed.map(window => window.label));
             this.render();
         };
         try {
-            if (provider === 'codex') {
-                const configured = this.settings.get_string('codex-path');
-                const executable = configured.length <= 4096 ? GLib.find_program_in_path(configured || 'codex') : null;
-                if (!executable || !GLib.file_test(executable, GLib.FileTest.IS_REGULAR)) {
-                    publish({status: 'unavailable', snapshot: null,
-                        message: 'Codex CLI not found. Install the official CLI yourself, or set its executable path in Monitoring settings.'});
-                    return;
-                }
-                this.codex = new CodexController({executable,
-                    pollSeconds: this.settings.get_int('poll-seconds'), publish,
-                    openUri: uri => this.openLoginUri(uri, generation)});
-                this.codex.start();
-            } else {
-                if (this.settings.get_boolean('claude-cli-mode')) {
-                    const configured = this.settings.get_string('claude-path');
-                    const native = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'claude']);
-                    const executable = configured || GLib.find_program_in_path('claude') || native;
-                    this.claude = new ClaudeCliController({executable,
-                        pollSeconds: this.settings.get_int('poll-seconds'), publish});
-                } else this.claude = new ClaudeController({publish, sourceId: this.claudeSource ?? undefined});
-                this.claude.start();
+            const executable = this.executable(provider);
+            if (!executable) {
+                publish({status: 'unavailable', snapshot: null,
+                    message: 'Official CLI not found. Install it yourself, or set its absolute path with gsettings.'});
+                return;
             }
+            const options = {executable, pollSeconds: this.settings.get_int('poll-seconds'), publish};
+            if (provider === 'codex') (this.codex = new CodexController(options)).start();
+            else (this.claude = new ClaudeCliController(options)).start();
         } catch {
             publish({status: 'error', snapshot: null,
-                message: 'Provider could not start. Check the official CLI and local setup guidance.'});
+                message: 'Provider could not start. Check the official CLI installation.'});
         }
     }
 
@@ -138,129 +122,29 @@ export default class UsageScopeExtension extends Extension {
         ++this.generations[provider];
         this.alerts[provider].clear();
         this.busy[provider] = false;
-        if (provider === 'codex') {
-            const controller = this.codex;
-            this.codex = null;
-            this.login = false;
-            this.loginAttempt = null;
-            this.cancelingLogin = false;
-            for (const cancellable of this.browserLaunches) cancellable.cancel();
-            this.browserLaunches.clear();
-            controller?.stop();
-        } else {
-            const controller = this.claude;
-            this.claude = null;
-            controller?.stop();
-        }
+        const controller = provider === 'codex' ? this.codex : this.claude;
+        if (provider === 'codex') this.codex = null;
+        else this.claude = null;
+        controller?.stop();
         this.views[provider] = disabled();
     }
 
-    private connectCodex(): void {
-        if (!this.active || !this.enabled.codex || this.busy.codex || this.login) return;
-        this.login = true;
-        const attempt = this.runCodex('connect');
-        this.loginAttempt = attempt;
-        void attempt.then(() => {
-            if (this.loginAttempt === attempt) this.loginAttempt = null;
-        });
-    }
-
-    private async runCodex(action: 'refresh' | 'connect'): Promise<void> {
-        if (!this.active || !this.enabled.codex || this.busy.codex || (this.login && action !== 'connect')) return;
-        if (!this.codex) this.reconcile('codex');
-        const controller = this.codex;
-        if (!controller) {this.login = false; this.render(); return;}
-        const generation = this.generations.codex;
-        this.busy.codex = true;
+    private async refresh(provider: ProviderId): Promise<void> {
+        if (!this.active || !this.enabled[provider] || this.busy[provider]) return;
+        if (!(provider === 'codex' ? this.codex : this.claude)) this.reconcile(provider);
+        const controller = provider === 'codex' ? this.codex : this.claude;
+        if (!controller) {this.render(); return;}
+        const generation = this.generations[provider];
+        this.busy[provider] = true;
         this.render();
         try {
-            await controller[action]();
-        } catch {
-            if (this.active && generation === this.generations.codex)
-                this.views.codex = {...this.views.codex, status: 'error', message: 'Codex action failed. Check the CLI and try again.'};
+            await controller.refresh();
         } finally {
-            if (this.active && generation === this.generations.codex) {
-                this.busy.codex = this.cancelingLogin;
-                // connect() returns after launching the browser; keep Cancel until login finishes.
-                if (this.views.codex.status !== 'loading') this.login = false;
+            if (this.active && generation === this.generations[provider]) {
+                this.busy[provider] = false;
                 this.render();
             }
         }
-    }
-
-    private async cancelLogin(): Promise<void> {
-        if (!this.active || !this.codex || !this.login) return;
-        const controller = this.codex;
-        const generation = this.generations.codex;
-        const attempt = this.loginAttempt;
-        for (const cancellable of this.browserLaunches) cancellable.cancel();
-        this.browserLaunches.clear();
-        this.login = false;
-        this.cancelingLogin = true;
-        this.busy.codex = true;
-        this.render();
-        try {
-            // Login may still be waiting for its ID. Suppress its browser callback
-            // immediately, then cancel after that in-flight start has completed.
-            await attempt;
-            if (!this.active || generation !== this.generations.codex) return;
-            await controller.cancelLogin();
-        } catch {
-            // The controller owns cancellation and reports provider failures separately.
-        } finally {
-            if (this.active && generation === this.generations.codex) {
-                this.busy.codex = false;
-                this.cancelingLogin = false;
-                this.views.codex = {...this.views.codex, status: 'waiting', message: 'Login canceled. CLI sign-in is unchanged.'};
-                this.render();
-            }
-        }
-    }
-
-    private async runClaude(action: 'refresh' | 'select', id: string | null = null): Promise<void> {
-        if (!this.active || !this.enabled.claude || this.busy.claude || !this.claude) return;
-        if (action === 'select' && !(this.claude instanceof ClaudeController)) return;
-        const controller = this.claude;
-        const generation = this.generations.claude;
-        this.busy.claude = true;
-        if (action === 'select') {
-            this.views.claude = {status: 'loading', snapshot: null, message: 'Selecting one Claude session.'};
-        }
-        this.render();
-        try {
-            if (action === 'select') {
-                if (controller instanceof ClaudeController) await controller.selectSource(id);
-                if (this.active && generation === this.generations.claude) this.claudeSource = id;
-            } else await controller.refresh();
-        } catch {
-            if (this.active && generation === this.generations.claude)
-                this.views.claude = {...this.views.claude, status: 'error', message: 'Could not read that Claude source. Review local setup and source selection.'};
-        } finally {
-            if (this.active && generation === this.generations.claude) {
-                this.busy.claude = false;
-                this.render();
-            }
-        }
-    }
-
-    private openLoginUri(uri: string, generation: number): void {
-        // CodexController validates the official HTTPS URL before this callback.
-        if (!this.active || !this.login || generation !== this.generations.codex) return;
-        const cancellable = new Gio.Cancellable();
-        this.browserLaunches.add(cancellable);
-        Gio.AppInfo.launch_default_for_uri_async(uri, null, cancellable, (_source, result) => {
-            this.browserLaunches.delete(cancellable);
-            try {
-                Gio.AppInfo.launch_default_for_uri_finish(result);
-            } catch {
-                if (!this.active || generation !== this.generations.codex || cancellable.is_cancelled()) return;
-                this.views.codex = {...this.views.codex, status: 'error',
-                    message: 'The default browser could not open Codex sign-in. Check your default HTTPS application, then reconnect.'};
-                this.login = false;
-                void this.codex?.cancelLogin();
-                this.render();
-            }
-        });
     }
 
     private openWebsite(provider: ProviderId): void {
@@ -291,7 +175,7 @@ export default class UsageScopeExtension extends Extension {
         }
         this.notificationSource.addNotification(new MessageTray.Notification({
             source: this.notificationSource, title: `${provider === 'codex' ? 'ChatGPT' : 'Claude'} 잔여량 30% 이하`,
-            body: plainText(`${labels.slice(0, 4).join(', ')} ${provider === 'claude' ? '마지막 보고' : '조회'} 잔여량이 30% 이하입니다.`, 240),
+            body: plainText(`${labels.slice(0, 4).join(', ')} 조회 잔여량이 30% 이하입니다.`, 240),
             useBodyMarkup: false, isTransient: true, privacyScope: MessageTray.PrivacyScope.USER,
             urgency: MessageTray.Urgency.NORMAL,
         }));
@@ -300,11 +184,8 @@ export default class UsageScopeExtension extends Extension {
     private render(): void {
         if (!this.active || !this.indicator || !this.settings) return;
         const now = Date.now();
-        this.indicator.update(this.views, this.enabled, this.busy, this.login, now, this.menuOpen);
-        if (this.menuOpen) {
-            this.indicator.setSettings(this.settings.get_int('poll-seconds'), this.settings.get_string('codex-path'), this.settings.get_boolean('claude-cli-mode'));
-            this.indicator.setSources(this.claude instanceof ClaudeController ? this.claude.listSources() : [], this.views.claude.snapshot?.sourceId ?? this.claudeSource);
-        }
+        this.indicator.update(this.views, this.enabled, this.busy, now, this.menuOpen);
+        if (this.menuOpen) this.indicator.setPollSeconds(this.settings.get_int('poll-seconds'));
         const deadline = nextUiDeadline(this.views, this.enabled, this.menuOpen, now);
         if (deadline === this.clockDeadline) return;
         if (this.clockSource) GLib.Source.remove(this.clockSource);
@@ -339,7 +220,6 @@ export default class UsageScopeExtension extends Extension {
         this.notificationSource?.destroy(MessageTray.NotificationDestroyedReason.SOURCE_CLOSED);
         this.notificationSource = null;
         this.enabled = {codex: false, claude: false};
-        this.claudeSource = null;
         this.indicator?.destroy();
         this.indicator = null;
         this.settings = null;

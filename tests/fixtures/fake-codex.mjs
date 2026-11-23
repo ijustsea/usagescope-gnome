@@ -29,10 +29,6 @@ input.on('line',line=>{
   if(quotaReads===1)console.log(JSON.stringify({method:'account/updated',params:{authMode:'chatgpt'}}));
   else result.accountId='new-account';
  }
- if(r.method==='account/login/start') result={type:'chatgpt',loginId:'test-login',authUrl:mode==='evil-url'?'https://evil.invalid/':'https://auth.openai.com/authorize?state=test'};
- const reply=()=>{
-  console.log(JSON.stringify({id:r.id,result}));
-  if(mode==='failed-login'&&r.method==='account/login/start')setTimeout(()=>console.log(JSON.stringify({method:'account/login/completed',params:{loginId:'test-login',success:false}})),30);
- };
- if(mode==='delayed-login' && r.method==='account/login/start')setTimeout(reply,150);else reply();
+ if(r.method==='account/rateLimits/read' && mode==='signed-out'){console.log(JSON.stringify({id:r.id,error:{code:-32600,message:'Not logged in. Run codex login.'}}));return;}
+ console.log(JSON.stringify({id:r.id,result}));
 });

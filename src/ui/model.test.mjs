@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {LowQuotaAlerts, nextUiDeadline, plainText, receiptAge, setupCommands, sourceLabel, quotaRows, cardStatus} from '../../build/ui/model.js';
+import {LowQuotaAlerts, nextUiDeadline, plainText, receiptAge, quotaRows, cardStatus} from '../../build/ui/model.js';
+import {panelText} from '../../build/core/format.js';
 import {parseClaudeCliUsage} from '../../build/core/normalize.js';
 import {ProviderState} from '../../build/core/state.js';
 
@@ -62,10 +63,11 @@ test('compact status keeps server-reported restriction visible',()=>{
  assert.match(cardStatus(sample(80,1,{allowed:false}),now),/사용 제한/);
 });
 
-test('ready Claude snapshots without quota windows report missing limits even with tier metadata', () => {
-    for (const planType of [null, 'pro', 'max']) {
-        const view = sample(50, 1, {provider: 'claude', planType, windows: []});
+test('snapshots without quota windows report missing limits for both providers, even with tier metadata', () => {
+    for (const provider of ['codex', 'claude']) for (const planType of [null, 'pro', 'max']) {
+        const view = sample(50, 1, {provider, planType, windows: []});
         assert.equal(cardStatus(view, now), '한도 정보 미제공');
+        assert.equal(cardStatus({...view, status: 'waiting'}, now), '한도 정보 미제공');
         assert.deepEqual(quotaRows(view, now), []);
     }
 });
@@ -81,19 +83,32 @@ test('Claude CLI missing quotas reach the card through the actual waiting provid
     assert.deepEqual(quotaRows(view, now), []);
 });
 
-test('missing Claude limits status preserves real quota, loading and failure history', () => {
-    assert.equal(cardStatus(sample(50, 1, {provider: 'claude'}), now), '마지막 보고 · 방금');
-    const historical = {...sample(50, 1, {provider: 'claude'}), status: 'waiting'};
-    assert.equal(cardStatus(historical, now), '마지막 보고 · 방금');
-    assert.equal(cardStatus(sample(50, 1, {windows: []}), now), '업데이트 · 방금');
+test('both providers label polled quota the same way, keeping loading and failure history', () => {
+    for (const provider of ['codex', 'claude']) {
+        assert.equal(cardStatus(sample(50, 1, {provider}), now), '업데이트 · 방금');
+        assert.equal(cardStatus({...sample(50, 1, {provider}), status: 'error'}, now), '이전 조회 · 방금');
+        assert.equal(panelText(sample(50, 1, {provider}), now), '5h 50%');
+        assert.equal(panelText({...sample(50, 1, {provider}), status: 'error'}, now), '~5h 50%');
+    }
     const state = new ProviderState();
     state.accept(parseClaudeCliUsage({
-        rate_limits_available: false, rate_limits: null, subscription_type: 'team',
+        rate_limits_available: true, rate_limits: {five_hour: {utilization: 40, resets_at: null}}, subscription_type: 'team',
     }, 'cli-test', now - 60_000));
-    assert.equal(cardStatus(state.loading(), now), '마지막 보고 · 1분 전');
-    for (const status of ['error', 'unavailable', 'auth-required']) {
-        assert.equal(cardStatus(state.fail('Unavailable', status), now), '마지막 보고 · 1분 전');
+    assert.equal(cardStatus(state.loading(), now), '이전 조회 · 1분 전');
+    for (const status of ['error', 'unavailable']) {
+        assert.equal(cardStatus(state.fail('Unavailable', status), now), '이전 조회 · 1분 전');
     }
+    assert.equal(cardStatus(state.fail('Signed out', 'auth-required'), now), 'CLI 로그인 필요 · 1분 전');
+});
+
+test('cards without usage point at the CLI action instead of removed settings', () => {
+    const empty = status => ({status, snapshot: null, message: ''});
+    assert.equal(cardStatus(empty('auth-required'), now), '터미널에서 CLI 로그인 필요');
+    assert.equal(cardStatus(empty('unavailable'), now), '공식 CLI를 찾을 수 없음');
+    assert.equal(cardStatus(empty('error'), now), '조회 실패 · CLI 로그인 확인');
+    assert.equal(cardStatus(empty('loading'), now), '확인 중…');
+    assert.equal(cardStatus(empty('waiting'), now), '조회 대기');
+    assert.equal(cardStatus(empty('disabled'), now), '모니터링 꺼짐');
 });
 
 test('initial low sample, wrong provider, reset and source changes never alert', () => {
@@ -137,16 +152,6 @@ test('receipt ages use epoch milliseconds; text is bounded and stays plain', () 
     assert.equal(plainText('x'.repeat(1000), 20).length, 20);
 });
 
-test('setup commands only describe preview/apply, with quoted extension paths', () => {
-    const commands = setupCommands('/tmp/a b');
-    assert.deepEqual(commands, [
-        "gjs -m '/tmp/a b/claude/setup.js' --preview",
-        "gjs -m '/tmp/a b/claude/setup.js' --apply",
-    ]);
-    assert.equal(setupCommands("/tmp/a'b")[0], "gjs -m '/tmp/a'\\''b/claude/setup.js' --preview");
-    assert.equal(sourceLabel('0123456789abcdef0123456789abcdef'), '0123456789ab…abcdef');
-});
-
 test('UI clock is idle when disabled and schedules closed-panel freshness and expiry only', () => {
     const views = {codex: sample(50, 0), claude: {...sample(50, 0), snapshot: null}};
     assert.equal(nextUiDeadline(views, {codex: false, claude: false}, true, now), null);
@@ -157,4 +162,7 @@ test('UI clock is idle when disabled and schedules closed-panel freshness and ex
     views.codex.snapshot.receivedAt = now - 400_000;
     views.codex.snapshot.windows[0].resetsAt = now / 1000;
     assert.equal(nextUiDeadline(views, {codex: true, claude: false}, false, now), null);
+    const claude = {codex: {...sample(50, 0), snapshot: null}, claude: sample(50, 0, {provider: 'claude'})};
+    claude.claude.snapshot.windows[0].resetsAt = null;
+    assert.equal(nextUiDeadline(claude, {codex: false, claude: true}, false, now), now + 360_001);
 });

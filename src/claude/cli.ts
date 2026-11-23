@@ -20,11 +20,19 @@ function identity(value:unknown):string|null{
  return checksum.get_string();
 }
 
-/** Experimental official SDK control interface. Never sends a user message or /usage prompt. */
+/** A signed-out CLI still answers initialize, reporting tokenSource "none" (observed on Claude Code 2.1.323). */
+export class ClaudeSignedOut extends Error{constructor(){super('Claude CLI is not signed in');}}
+function signedOut(account:unknown):boolean{
+ return !!account&&typeof account==='object'&&!Array.isArray(account)&&(account as Record<string,unknown>).tokenSource==='none';
+}
+
+/** Official SDK control interface (vendor-labelled experimental). Never sends a user message or /usage prompt. */
 export async function readClaudeCliUsage(executable:string,cancel:Gio.Cancellable,timeoutMs=15000):Promise<UsageSnapshot>{
  if(cancel.is_cancelled())throw new Error('CLI query cancelled');
  const launcher=new Gio.SubprocessLauncher({flags:Gio.SubprocessFlags.STDIN_PIPE|Gio.SubprocessFlags.STDOUT_PIPE|Gio.SubprocessFlags.STDERR_SILENCE});
  launcher.set_cwd('/');launcher.setenv('DISABLE_AUTOUPDATER','1',true);
+ // Skip telemetry, error reporting and other non-essential CLI traffic on every poll.
+ launcher.setenv('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC','1',true);
  const child=launcher.spawnv([trustedExecutable(executable),'-p','--input-format','stream-json','--output-format','stream-json','--verbose',
   '--no-session-persistence','--setting-sources','','--settings','{"disableAllHooks":true}',
   '--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--tools','','--disable-slash-commands','--no-chrome']);
@@ -73,7 +81,10 @@ export async function readClaudeCliUsage(executable:string,cancel:Gio.Cancellabl
  };
  try{
   await send('usagescope-init',{subtype:'initialize',hooks:{}});
-  const accountId=identity((await reply('usagescope-init')).account);
+  const init=await reply('usagescope-init');
+  // Without sign-in get_usage only reports "no limits", so stop before asking for it.
+  if(signedOut(init.account))throw new ClaudeSignedOut();
+  const accountId=identity(init.account);
   await send('usagescope-usage',{subtype:'get_usage',skip_behaviors:true});
   const payload=await reply('usagescope-usage');
   const source='claude-cli-'+(accountId??GLib.uuid_string_random());
@@ -105,9 +116,12 @@ export class ClaudeCliController{
   this.pending=readClaudeCliUsage(this.options.executable,cancel).then(snapshot=>{
    if(!this.active||generation!==this.generation)return;
    this.state.accept(snapshot);this.failures=0;this.publish();
-  }).catch(()=>{
+  }).catch(error=>{
    if(!this.active||generation!==this.generation)return;
-   this.failures++;this.state.fail('Claude CLI 조회 실패: 로그인·지원 버전을 확인하세요.');this.publish();
+   this.failures++;
+   if(error instanceof ClaudeSignedOut)this.state.fail('터미널에서 claude auth login을 실행하세요.','auth-required');
+   else this.state.fail('Claude CLI 조회 실패: 로그인·지원 버전을 확인하세요.');
+   this.publish();
   }).finally(()=>{
    if(generation!==this.generation)return;
    this.pending=null;this.cancel=null;
@@ -117,7 +131,6 @@ export class ClaudeCliController{
   });
   return this.pending;
  }
- connect():Promise<void>{return this.refresh();}
  stop():void{
   this.active=false;this.generation++;if(this.timer){GLib.Source.remove(this.timer);this.timer=0;}
   this.cancel?.cancel();this.cancel=null;this.pending=null;this.state.clear('disabled');this.publish();

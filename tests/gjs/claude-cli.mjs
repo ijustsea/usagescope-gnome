@@ -35,6 +35,16 @@ const run=async()=>{
  }
  GLib.setenv('USAGESCOPE_CLAUDE_TEST_MODE','unavailable',true);
  assert((await readClaudeCliUsage(exe,new Gio.Cancellable(),1000)).windows.length===0,'missing quota stays missing');
+ GLib.setenv('USAGESCOPE_CLAUDE_TEST_MODE','signed-out',true);
+ try{file(root+'/trace').delete(null);}catch{}
+ let signedOut=null;try{await readClaudeCliUsage(exe,new Gio.Cancellable(),1000);}catch(e){signedOut=e;}
+ assert(signedOut?.message==='Claude CLI is not signed in','signed-out CLI is reported as sign-in required, not as missing limits');
+ assert(read(root+'/trace').trim().split('\n').length===1,'signed-out read stops after initialize');
+ file(root+'/trace').delete(null);
+ const signedView=[];const signedController=new ClaudeCliController({executable:exe,pollSeconds:60,publish:v=>signedView.push(v)});
+ signedController.start();await signedController.refresh();
+ assert(signedView.at(-1).status==='auth-required'&&signedController.timer!==0,'controller shows sign-in requirement and keeps retrying');
+ signedController.stop();
  GLib.setenv('USAGESCOPE_CLAUDE_TEST_MODE','unknown-account',true);
  const a=await readClaudeCliUsage(exe,new Gio.Cancellable(),1000),b=await readClaudeCliUsage(exe,new Gio.Cancellable(),1000);
  assert(a.sourceId!==b.sourceId,'unknown identity starts a fresh alert baseline');

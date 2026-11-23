@@ -32,3 +32,7 @@ test('CLI schema changes cannot turn bad percentages or dates into valid quotas'
  assert.deepEqual(read({rate_limits_available:true,rate_limits:{five_hour:{utilization:null,resets_at:null}}}).windows,[]);
  assert.throws(()=>read({rate_limits_available:true,rate_limits:{limits:Array.from({length:65},()=>({kind:'session',percent:1}))}}));
 });
+test('CLI subscription tier is whitelisted and never inferred from model names',()=>{
+ for(const [raw,want] of [['max','max'],['pro','pro'],['team','team'],['<b>max</b>',null],['claude-opus-4-6',null],[undefined,null]])
+  assert.equal(read({subscription_type:raw,rate_limits_available:false,rate_limits:null}).planType,want);
+});

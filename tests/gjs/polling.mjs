@@ -13,7 +13,7 @@ const root=GLib.dir_make_tmp('usagescope-polling-XXXXXX');
 const cwd=GLib.get_current_dir();
 const samples={codex:0,claude:0};let wake=null;
 const received=provider=>view=>{if(view.status==='ready'){samples[provider]++;wake?.();}};
-const codex=new CodexController({executable:cwd+'/tests/fixtures/fake-codex.mjs',pollSeconds:15,publish:received('codex'),openUri:()=>{throw Error('polling must not sign in');}});
+const codex=new CodexController({executable:cwd+'/tests/fixtures/fake-codex.mjs',pollSeconds:15,publish:received('codex')});
 const claude=new ClaudeCliController({executable:cwd+'/tests/fixtures/fake-claude-usage.mjs',pollSeconds:15,publish:received('claude')});
 const run=async()=>{
  GLib.setenv('USAGESCOPE_TEST_PID',root+'/codex',true);

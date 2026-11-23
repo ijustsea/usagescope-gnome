@@ -8,35 +8,29 @@ UsageScope is a local GNOME extension, not a sandbox. GNOME extensions execute i
 
 | Boundary | Control |
 | --- | --- |
-| Codex command execution | Explicit argv, absolute path, executable/owner/mode checks, no shell/eval; only owned subprocess terminated |
-| App Server protocol | Exact method allowlist; no model turn/thread, token export, logout, purchase or earned-reset consumption methods; 1 MiB frames, 4 MiB total stdout and 256 messages per connection, bounded pending requests/timeouts |
-| Browser authentication | HTTPS exact-host allowlist auth.openai.com/chatgpt.com; reject userinfo, control characters, backslashes and nonstandard ports; no raw auth URLs logged |
+| CLI command execution | Explicit argv; configured absolute path, else PATH, else ~/.local/bin for both CLIs; executable/owner/mode checks through ancestors; no shell/eval; only owned subprocess terminated; no CLI process kept between polls |
+| App Server protocol | Exact read-only method allowlist; no model turn/thread, sign-in, token export, logout, purchase or earned-reset consumption methods; 1 MiB frames, 4 MiB total stdout and 256 messages per connection, bounded pending requests/timeouts |
+| Browser | Never opened automatically. Card website buttons open fixed official URLs (chatgpt.com, claude.ai) only on click; no sign-in flow or auth URL handling |
 | Authentication | Official CLIs own credentials; UsageScope does not read auth.json, cookies or tokens |
-| Claude input | Bounded stdin, explicit projection of known quota fields, no transcripts/prompts/working directories persisted |
-| Claude CLI usage (experimental opt-in) | Official SDK control protocol initialize/get_usage only, skip_behaviors=true, no user messages; hooks/MCP/tools/skills/session persistence disabled, neutral cwd, trusted executable, 1MiB frame/4MiB connection/256 message/15s deadline and owned-child cleanup |
-| Subscription tier | Codex reported planType; optional trusted Claude CLI auth/status projection of subscriptionType only, 64 KiB/2.5 s bound and private 300 s profile/CLI-scoped cache. No inference from AI model names and no auth PII stored |
-| Runtime storage | Private owned directories/files, owner/mode checks through ancestors, symlink rejection, immutable snapshots, bounded inventory/retention and own-commit rollback on failed concurrent publication; never a security boundary against same UID |
-| CLI configuration | Explicit preview/apply/restore; private backup; capture-before-validate restoration, exclusive publication and retained recovery archives; unsupported existing shell commands refused; no actual config changes from the panel |
+| Claude CLI usage | Official SDK control protocol (vendor-labelled experimental) initialize/get_usage only, skip_behaviors=true, no user messages; hooks/MCP/tools/skills/session persistence and non-essential traffic (CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) disabled, neutral cwd, trusted executable, 1MiB frame/4MiB connection/256 message/15s deadline and owned-child cleanup |
+| Subscription tier | Codex reported planType; Claude get_usage subscription_type through a fixed whitelist. No inference from AI model names and no auth PII stored |
+| CLI configuration | UsageScope never reads or writes CLI settings; no statusline wrapper, settings edit or setup helper. The spawned official CLIs still manage their own config and cache files |
 | UI | Plain bounded text, no markup injection, source-aware states, history not presented as current |
 | Lifecycle | Generation guards, cancellation, bounded reconnection; successful quota reads close stdin and wait up to 2 seconds for exit, then terminate only the owned child; synchronous disable detaches resources and stops owned child |
 | Supply chain | Dev dependencies pinned, npm scripts disabled on install, runtime archive allowlist, deterministic ZIP/hash, no node_modules or bundled native executables |
 | GitHub Actions | Read-only permissions, checkout credentials not persisted, third-party action references pinned to commit IDs |
 
-Only existing explicitly configured absolute renderer executables may be run by the Claude bridge; arbitrary shell expressions are not evaluated. Executable, interpreter and parent/symlink chains are validated and canonical interpreter paths persisted. Path checks do not establish vendor authenticity: the CLI and renderer remain trusted user-installed code. Input/output size and deadline restrictions can reject renderers that exceeded those limits.
+Executable ancestor paths must be owned by root or the current user and must not be group/world-writable. Root-owned sticky shared directories (for example `/tmp`) are a limited exception. These checks prevent accepting an obviously replaceable naming chain; they do not eliminate all same-user path races or establish executable authenticity.
 
-The opt-in Claude setup helper preserves an exact private backup of existing settings. That backup may contain sensitive values already present in the user's configuration; it is kept in a 0700 directory with 0600 backup files, never logged, uploaded or included in the extension archive.
+The Claude CLI usage reader consumes only the known quota/tier fields. Account email/organization returned by the CLI's initialize response are hashed with the profile path in memory solely to distinguish alert baselines; raw account metadata is never logged or stored. Missing identity gets a fresh source baseline. The experimental vendor contract may change or provide no limits; unsupported replies fail closed with no model-prompt fallback. The CLI's own behavior and managed policy remain external trust boundaries.
 
-Configuration and runtime ancestor paths must be owned by root or the current user and must not be group/world-writable. Root-owned sticky shared directories (for example `/tmp`) are a limited exception. These checks prevent accepting an obviously replaceable naming chain; they do not eliminate all same-user path races or establish executable authenticity.
-
-The optional Claude CLI usage reader consumes only the known quota/tier fields. Account email/organization returned by the CLI's initialize response are hashed with the profile path in memory solely to distinguish alert baselines; raw account metadata is never logged or stored. Missing identity gets a fresh source baseline. The passive statusline and CLI modes are exclusive. The experimental vendor contract may change or provide no limits; unsupported replies fail closed with no model-prompt fallback. The CLI's own behavior and managed policy remain external trust boundaries.
-
-Restore first captures the settings inode in a private `.usagescope-recovery-*` directory, validates its version/bytes, and publishes originals without overwriting a concurrent file. Captured settings are retained even after success so late writes through an open descriptor remain recoverable. Success also archives the previous setup transaction; conflicts preserve the live wrapper and retain recovery data instead of overwriting edits. There are at most 16 recovery archives and a bounded configuration-directory scan. Archives persist until the user inspects them; they can contain sensitive settings and must not be uploaded. This is a recovery protocol, not a lock against arbitrary same-user editors.
+Versions before 0.4.0 shipped an opt-in statusline setup helper. Its private backups (`.usagescope-setup`, `.usagescope-recovery-*` in the Claude config directory) may contain sensitive settings. 0.4.0 neither reads nor deletes them; README documents how to restore and review them manually.
 
 ## Behaviors intentionally excluded
 
-No custom backend, analytics, self-update, downloaded code execution, remote scripts, cookie extraction, model prompts or automatic dependency installation. Missing/expired quotas never imply 100% remaining. Account/session data is never merged or summed. Repeated receipt does not prove fresh server observation.
+No custom backend, analytics, self-update, downloaded code execution, remote scripts, cookie extraction, model prompts, automatic browser launches or automatic dependency installation. Missing/expired quotas never imply 100% remaining. Account/session data is never merged or summed. Repeated receipt does not prove fresh server observation.
 
-Website buttons open fixed official URLs only; they neither enable acquisition nor establish local CLI authentication. Claude alerts describe the last reported quota, not a freshly verified server reading. Newly received threshold crossings to 30% or below notify once, with recovery at 35% required to rearm; stale, repeated, expired or first samples do not alert.
+Website buttons open fixed official URLs only; they neither enable acquisition nor establish local CLI authentication. Alerts describe the latest CLI read, not a guarantee of server-side freshness. Newly received threshold crossings to 30% or below notify once, with recovery at 35% required to rearm; stale, repeated, expired or first samples do not alert.
 
 ## Verification
 
