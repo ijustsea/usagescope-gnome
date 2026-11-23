@@ -71,7 +71,7 @@ export function parseClaudeCliUsage(payload:unknown,sourceId:string,receivedAt:n
  const limits=object(p.rate_limits);
  const isoReset=(value:unknown):number|null=>{
   if(value==null)return null;
-  if(typeof value!=='string'||value.length>40||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value))throw new Error('Invalid CLI reset');
+  if(typeof value!=='string'||value.length>40||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value))throw new Error('Invalid CLI reset');
   return reset(Math.floor(Date.parse(value)/1000));
  };
  for(const [key,seconds,label] of [['five_hour',18000,'5h'],['seven_day',604800,'7d']] as const){

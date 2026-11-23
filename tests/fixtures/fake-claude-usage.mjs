@@ -28,7 +28,7 @@ input.on('line',line=>{
   initialized=true;value={account:mode==='unknown-account'?{}:{email:'fixture@example.test',organization:'fixture-org',subscriptionType:'team'}};
  }else{
   if(!initialized||m.request.skip_behaviors!==true)throw Error('usage must skip transcript scanning');
-  value={subscription_type:'team',session:{model_usage:{}},rate_limits_available:mode!=='unavailable',rate_limits:mode==='unavailable'?null:{five_hour:{utilization:0,resets_at:'2030-01-01T00:00:00Z'},seven_day:{utilization:38,resets_at:null}}};
+  value={subscription_type:'team',session:{model_usage:{}},rate_limits_available:mode!=='unavailable',rate_limits:mode==='unavailable'?null:{five_hour:{utilization:0,resets_at:'2030-01-01T00:00:00.947265+00:00'},seven_day:{utilization:38,resets_at:null}}};
  }
  console.log(JSON.stringify({type:'control_response',response:{subtype:mode==='refused'?'error':'success',request_id:m.request_id,response:value}}));
 });

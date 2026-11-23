@@ -13,6 +13,7 @@ const run=async()=>{
  const snapshot=await readClaudeCliUsage(exe,new Gio.Cancellable(),1000);
  assert(snapshot.planType==='team'&&snapshot.windows.length===2,'real pipes normalize Team quota');
  assert(snapshot.windows[0].usedPercent===0&&snapshot.windows[1].usedPercent===38,'zero and weekly values preserved');
+ assert(snapshot.windows[0].resetsAt===1893456000,'microsecond offset reset parsed by GJS');
  assert(!JSON.stringify(snapshot).includes('fixture@example'),'raw account metadata never retained');
  assert(/^[a-f0-9]{64}$/.test(snapshot.accountId),'identity is an opaque digest');
  const messages=read(root+'/trace').trim().split('\n').map(JSON.parse);
