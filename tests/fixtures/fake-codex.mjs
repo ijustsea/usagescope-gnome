@@ -3,6 +3,9 @@ import readline from 'node:readline';
 import {appendFileSync,writeFileSync} from 'node:fs';
 if(process.env.USAGESCOPE_TEST_PID)writeFileSync(process.env.USAGESCOPE_TEST_PID,String(process.pid),{mode:0o600});
 const mode=process.env.USAGESCOPE_TEST_MODE ?? 'normal';
+// Quota reads must not run Codex plugin/marketplace sync (per-process overrides, before the subcommand).
+const argv=process.argv.slice(2).join(' ');
+if(!argv.startsWith('-c features.plugins=false -c features.remote_plugin=false app-server'))process.exit(2);
 const input=readline.createInterface({input:process.stdin});
 input.on('close',()=>{
  if(process.env.USAGESCOPE_TEST_EOF)writeFileSync(process.env.USAGESCOPE_TEST_EOF,'eof',{mode:0o600});

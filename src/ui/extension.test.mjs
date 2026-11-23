@@ -33,8 +33,10 @@ function harness({programs = {codex: '/usr/bin/codex', claude: '/usr/bin/claude'
     }
     class Controller {
         constructor(options) {this.options = options; this.refreshes = 0;}
-        start() {this.options.publish({status: 'ready', snapshot: null, message: ''});}
+        start() {this.startedPaused = !!this.paused; this.options.publish({status: 'ready', snapshot: null, message: ''});}
         async refresh() {this.refreshes++;}
+        pause() {this.paused = true;}
+        resume() {this.paused = false; this.resumes = (this.resumes ?? 0) + 1;}
         stop() {this.stopped = true;}
     }
     class Codex extends Controller {constructor(options) {super(options); h.codex.push(this);}}
@@ -53,9 +55,23 @@ function harness({programs = {codex: '/usr/bin/codex', claude: '/usr/bin/claude'
         launch_default_for_uri_async(uri) {h.launches.push(uri);}, launch_default_for_uri_finish() {},
     }};
     const Main = {panel: {addToStatusArea() {}}, messageTray: {add() {}}};
+    h.watches = new Map(); let nextWatch = 1;
+    const idleMonitor = {
+        add_idle_watch_full(ms, callback, flags) {const id = nextWatch++; h.watches.set(id, {kind: 'idle', ms, callback, flags}); return id;},
+        add_user_active_watch(callback) {const id = nextWatch++; h.watches.set(id, {kind: 'active', callback}); return id;},
+        remove_watch(id) {h.watches.delete(id);},
+    };
+    h.fire = kind => {
+        for (const [id, watch] of [...h.watches]) if (watch.kind === kind) {
+            if (kind === 'active') h.watches.delete(id); // Mutter active watches are one-shot.
+            watch.callback();
+        }
+    };
+    const shellGlobal = {backend: {get_core_idle_monitor: () => idleMonitor}};
     const Extension = new Function('Gio', 'GLib', 'Extension', 'Main', 'MessageTray', 'CodexController',
-        'ClaudeCliController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', 'websiteUrl', 'normalPollSeconds', emitted)(
-        Gio, GLib, Base, Main, {}, Codex, Claude, Indicator, Alerts, nextUiDeadline, value => value, websiteUrl, normalPollSeconds);
+        'ClaudeCliController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', 'websiteUrl', 'normalPollSeconds', 'global', 'Meta', emitted)(
+        Gio, GLib, Base, Main, {}, Codex, Claude, Indicator, Alerts, nextUiDeadline, value => value, websiteUrl, normalPollSeconds, shellGlobal,
+        {IdleMonitorWatchFlags: {UNINHIBITABLE: 1}});
     h.extension = new Extension();
     h.extension.enable();
     return h;
@@ -168,6 +184,23 @@ test('an interval stored by an older version is shown as its snapped choice',()=
  h.actions.menuStateChanged(true);assert.equal(h.pollSeconds,300);
  h.values['poll-seconds']=15;h.actions.menuStateChanged(true);assert.equal(h.pollSeconds,15);
  h.extension.disable();
+});
+test('five idle minutes pause both CLI providers and any input resumes them at once',()=>{
+ const h=harness();h.actions.setEnabled('codex',true);h.actions.setEnabled('claude',true);
+ const idle=[...h.watches.values()].filter(w=>w.kind==='idle');
+ assert.equal(idle.length,1);assert.equal(idle[0].ms,300000);assert.equal(idle[0].flags,1,'video playback inhibitors must not keep reads running');
+ h.fire('idle');
+ assert.equal(h.codex[0].paused,true);assert.equal(h.claude[0].paused,true);
+ assert.equal([...h.watches.values()].filter(w=>w.kind==='active').length,1);
+ h.fire('idle');assert.equal([...h.watches.values()].filter(w=>w.kind==='active').length,1,'a repeated idle signal adds no second watch');
+ h.actions.setPollSeconds(15);assert.equal(h.codex[1].paused,true,'a provider restarted while idle stays paused');
+ assert.equal(h.codex[1].startedPaused,true,'and is paused before start, so it does not read until input');
+ h.fire('active');
+ assert.equal(h.codex[1].paused,false);assert.equal(h.claude[1].paused,false);
+ assert.equal(h.codex[1].resumes,1);assert.equal(h.claude[1].resumes,1);
+ h.fire('idle');h.extension.disable();
+ assert.equal(h.watches.size,0,'disable removes the idle and pending active watches');
+ const late=h.codex[1].resumes;h.fire('active');assert.equal(h.codex[1].resumes,late);
 });
 test('interval preferences acquire nothing until monitoring is enabled',()=>{
  const h=harness();h.actions.setPollSeconds(15);

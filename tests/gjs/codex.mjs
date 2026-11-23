@@ -60,6 +60,15 @@ const run=async()=>{
  assert(!Gio.File.new_for_path('/proc/'+idlePid).query_exists(null),'quota-only controller releases its process between polls');
  await c.refresh();assert(latest.status==='ready','next explicit read reconnects after idle release');
  GLib.unsetenv('USAGESCOPE_TEST_PID');Gio.File.new_for_path(pidDir+'/pid').delete(null);Gio.File.new_for_path(pidDir).delete(null);
+ c.pause();assert(c.timer===0,'pause cancels the next scheduled read');
+ await c.refresh();assert(c.timer===0,'a read while paused schedules nothing further');
+ const beforeResume=latest.snapshot.receivedAt;c.resume();
+ assert(c.pending!==null,'resume starts a read at once');await c.pending;
+ assert(latest.status==='ready'&&latest.snapshot.receivedAt>beforeResume&&c.timer!==0,'resume reads at once and restores the interval');
+ const idleStart=new CodexController({executable:exe,pollSeconds:180,publish:()=>{}});
+ idleStart.pause();idleStart.start();
+ assert(idleStart.pending===null&&idleStart.timer===0,'a provider started while paused does not read');
+ idleStart.resume();assert(idleStart.pending!==null,'its first read waits for resume');await idleStart.pending;idleStart.stop();
  const received=latest.snapshot.receivedAt;
  c.stop();assert(latest.status==='disabled','disabled published');
  await c.refresh();assert(latest.status==='disabled','stopped controller never revives');
@@ -72,6 +81,20 @@ const run=async()=>{
  assert(!seen.includes('fake-account'),'account change invalidates outstanding old response');
  assert(seen.includes('new-account'),'account change schedules one new read');
  GLib.unsetenv('USAGESCOPE_TEST_MODE');
+ // Real Codex often emits account/updated during an ordinary read. The visible quota must stay
+ // (no flicker, no reset of the low-quota alert baseline) while the read is redone.
+ const views=[];
+ const steady=new CodexController({executable:exe,pollSeconds:180,publish:v=>views.push(v)});
+ steady.start();await steady.refresh();
+ assert(views.at(-1).snapshot?.accountId==='fake-account','first read shows the account');
+ const shown=views.length;
+ GLib.setenv('USAGESCOPE_TEST_MODE','switch-account',true);
+ await steady.refresh();
+ for(let i=0;i<40&&views.at(-1).snapshot?.accountId!=='new-account';i++)await new Promise(resolve=>GLib.timeout_add(GLib.PRIORITY_DEFAULT,25,()=>{resolve();return GLib.SOURCE_REMOVE;}));
+ steady.stop();GLib.unsetenv('USAGESCOPE_TEST_MODE');
+ const during=views.slice(shown,-1);
+ assert(during.every(v=>v.snapshot!==null),'account/updated never blanks the visible quota: '+during.map(v=>v.status).join(','));
+ assert(views.at(-2).snapshot?.accountId==='new-account'&&!views.slice(shown).some(v=>v.status==='ready'&&v.snapshot.accountId==='fake-account'),'the redone read replaces the discarded response');
  GLib.setenv('USAGESCOPE_TEST_MODE','signed-out',true);
  const signedDir=GLib.dir_make_tmp('usagescope-signed-out-XXXXXX');GLib.setenv('USAGESCOPE_TEST_PID',signedDir+'/pid',true);
  const signedOut=new CodexController({executable:exe,pollSeconds:180,publish:v=>latest=v});

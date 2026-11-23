@@ -1,5 +1,6 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
@@ -14,6 +15,10 @@ import {normalPollSeconds} from './core/polling.js';
 function disabled(): ProviderView {
     return {status: 'disabled', snapshot: null, message: 'Monitoring off; CLI sign-in is unchanged.'};
 }
+
+// No keyboard or pointer input for this long pauses CLI reads; any input resumes them at once.
+// Uninhibitable: video playback inhibits idle but nobody reads the panel then either.
+const IDLE_PAUSE_MS = 5 * 60 * 1000;
 
 const CLI: Record<ProviderId, {key: 'codex-path' | 'claude-path'; name: string}> = {
     codex: {key: 'codex-path', name: 'codex'},
@@ -37,6 +42,10 @@ export default class UsageScopeExtension extends Extension {
     private websiteLaunches = new Set<Gio.Cancellable>();
     private alerts: Record<ProviderId, LowQuotaAlerts> = {codex: new LowQuotaAlerts('codex'), claude: new LowQuotaAlerts('claude')};
     private notificationSource: MessageTray.Source | null = null;
+    private idleMonitor: Meta.IdleMonitor | null = null;
+    private idleWatch = 0;
+    private activeWatch = 0;
+    private idle = false;
 
     override enable(): void {
         if (this.active) return;
@@ -65,12 +74,26 @@ export default class UsageScopeExtension extends Extension {
                 }
                 this.render();
             });
+            this.idleMonitor = global.backend.get_core_idle_monitor();
+            this.idleWatch = this.idleMonitor.add_idle_watch_full(IDLE_PAUSE_MS, () => this.setIdle(true),
+                Meta.IdleMonitorWatchFlags.UNINHIBITABLE);
             this.reconcile('codex');
             this.reconcile('claude');
             this.render();
         } catch (error) {
             this.disable();
             throw error;
+        }
+    }
+
+    private setIdle(idle: boolean): void {
+        if (!this.active || !this.idleMonitor || this.idle === idle) return;
+        this.idle = idle;
+        // The active watch is one-shot (Mutter), so it only needs removing if disable() comes first.
+        if (idle) this.activeWatch = this.idleMonitor.add_user_active_watch(() => { this.activeWatch = 0; this.setIdle(false); });
+        for (const controller of [this.codex, this.claude]) {
+            if (idle) controller?.pause();
+            else controller?.resume();
         }
     }
 
@@ -111,8 +134,11 @@ export default class UsageScopeExtension extends Extension {
                 return;
             }
             const options = {executable, pollSeconds: this.settings.get_int('poll-seconds'), publish};
-            if (provider === 'codex') (this.codex = new CodexController(options)).start();
-            else (this.claude = new ClaudeCliController(options)).start();
+            const controller = provider === 'codex' ? (this.codex = new CodexController(options))
+                : (this.claude = new ClaudeCliController(options));
+            // Paused before start, so a provider restarted while idle does not read until input.
+            if (this.idle) controller.pause();
+            controller.start();
         } catch {
             publish({status: 'error', snapshot: null,
                 message: 'Provider could not start. Check the official CLI installation.'});
@@ -214,6 +240,10 @@ export default class UsageScopeExtension extends Extension {
         }
         if (this.settings && this.settingsSignal) this.settings.disconnect(this.settingsSignal);
         this.settingsSignal = 0;
+        for (const watch of [this.idleWatch, this.activeWatch]) if (watch) this.idleMonitor?.remove_watch(watch);
+        this.idleWatch = this.activeWatch = 0;
+        this.idleMonitor = null;
+        this.idle = false;
         this.stopProvider('codex');
         this.stopProvider('claude');
         for (const cancellable of this.websiteLaunches) cancellable.cancel();

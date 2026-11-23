@@ -104,10 +104,10 @@ export async function readClaudeCliUsage(executable:string,cancel:Gio.Cancellabl
 interface Options{executable:string;pollSeconds:number;publish:Publish;}
 export class ClaudeCliController{
  private state=new ProviderState();private active=false;private generation=0;private timer=0;private failures=0;
- private pending:Promise<void>|null=null;private cancel:Gio.Cancellable|null=null;
+ private pending:Promise<void>|null=null;private cancel:Gio.Cancellable|null=null;private paused=false;
  constructor(private options:Options){}
  private publish():void{try{this.options.publish(this.state.view());}catch{}}
- start():void{if(this.active)return;this.active=true;this.generation++;void this.refresh();}
+ start():void{if(this.active)return;this.active=true;this.generation++;if(!this.paused)void this.refresh();}
  refresh():Promise<void>{
   if(!this.active)return Promise.resolve();if(this.pending)return this.pending;
   if(this.timer){GLib.Source.remove(this.timer);this.timer=0;}
@@ -125,12 +125,15 @@ export class ClaudeCliController{
   }).finally(()=>{
    if(generation!==this.generation)return;
    this.pending=null;this.cancel=null;
-   if(!this.active)return;
+   if(!this.active||this.paused)return;
    const seconds=this.failures?Math.min(900,30*2**Math.min(5,this.failures-1)):normalPollSeconds(this.options.pollSeconds);
    this.timer=GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT,seconds,()=>{this.timer=0;void this.refresh();return GLib.SOURCE_REMOVE;});
   });
   return this.pending;
  }
+ /** While the user is away nobody reads the panel: keep the last view and stop scheduling reads. */
+ pause():void{this.paused=true;if(this.timer){GLib.Source.remove(this.timer);this.timer=0;}}
+ resume():void{if(!this.paused)return;this.paused=false;void this.refresh();}
  stop():void{
   this.active=false;this.generation++;if(this.timer){GLib.Source.remove(this.timer);this.timer=0;}
   this.cancel?.cancel();this.cancel=null;this.pending=null;this.state.clear('disabled');this.publish();

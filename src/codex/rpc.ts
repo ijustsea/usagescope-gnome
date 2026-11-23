@@ -16,7 +16,9 @@ export class RpcClient {
   const path=trustedExecutable(executable);
   const launcher=new Gio.SubprocessLauncher({flags:Gio.SubprocessFlags.STDIN_PIPE|Gio.SubprocessFlags.STDOUT_PIPE|Gio.SubprocessFlags.STDERR_PIPE});
   launcher.set_cwd('/');
-  this.process=launcher.spawnv([path,'app-server','--listen','stdio://']);
+  // Plugin/marketplace sync rewrote ~/.codex state on every read and cost ~27% more CPU (measured on 0.171.0).
+  // -c overrides apply to this process only and, unlike --disable, ignore unknown feature names.
+  this.process=launcher.spawnv([path,'-c','features.plugins=false','-c','features.remote_plugin=false','app-server','--listen','stdio://']);
   void this.read(this.process.get_stdout_pipe()!,false);
   void this.read(this.process.get_stderr_pipe()!,true);
   this.process.wait_async(null,(_source,result)=>{
@@ -79,7 +81,7 @@ export class RpcClient {
   return this.raw(method,params);
  }
  private async initialize():Promise<void> {
-  await this.raw('initialize',{clientInfo:{name:'usagescope_gnome',title:'UsageScope',version:'0.4.2'}});
+  await this.raw('initialize',{clientInfo:{name:'usagescope_gnome',title:'UsageScope',version:'0.4.3'}});
   await this.send({method:'initialized',params:{}});
  }
  private raw(method:string,params:unknown):Promise<unknown> {

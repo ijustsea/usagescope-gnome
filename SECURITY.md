@@ -8,7 +8,7 @@ UsageScope is a local GNOME extension, not a sandbox. GNOME extensions execute i
 
 | Boundary | Control |
 | --- | --- |
-| CLI command execution | Explicit argv; configured absolute path, else PATH, else ~/.local/bin for both CLIs; executable/owner/mode checks through ancestors; no shell/eval; only owned subprocess terminated; no CLI process kept between polls |
+| CLI command execution | Explicit argv; configured absolute path, else PATH, else ~/.local/bin for both CLIs; per-process Codex plugin overrides only, never written to config; executable/owner/mode checks through ancestors; no shell/eval; only owned subprocess terminated; no CLI process kept between polls |
 | App Server protocol | Exact read-only method allowlist; no model turn/thread, sign-in, token export, logout, purchase or earned-reset consumption methods; 1 MiB frames, 4 MiB total stdout and 256 messages per connection, bounded pending requests/timeouts |
 | Browser | Never opened automatically. Card website buttons open fixed official URLs (chatgpt.com, claude.ai) only on click; no sign-in flow or auth URL handling |
 | Authentication | Official CLIs own credentials; UsageScope does not read auth.json, cookies or tokens |

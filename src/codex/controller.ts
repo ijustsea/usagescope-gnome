@@ -8,7 +8,7 @@ interface Options {executable:string;pollSeconds:number;publish:Publish;}
 export class CodexController {
  private state=new ProviderState(); private rpc:RpcClient|null=null;private active=false;private generation=0;
  private timer=0;private pending:Promise<void>|null=null;private failures=0;
- private authEpoch=0;private accountChanged=false;
+ private authEpoch=0;private accountChanged=false;private paused=false;
  constructor(private options:Options) {}
  private publish():void {try{this.options.publish(this.state.view());}catch{/* Isolate UI failures. */}}
  private client():RpcClient {
@@ -16,14 +16,17 @@ export class CodexController {
    this.rpc=new RpcClient(this.options.executable);
    this.rpc.onNotification=(method)=>{
     if(!this.active||method!=='account/updated')return;
+    // Codex often sends this during an ordinary read (observed on 0.171.0). Discard the in-flight
+    // response and read again, but keep showing the last quota: clearing it blanked the card and
+    // reset the low-quota alert baseline. After a real switch the old quota stays only until the
+    // redone read (about 0.5 s); its accountId, when Codex reports one, starts a new alert baseline.
     this.authEpoch++;this.accountChanged=true;
-    this.state.clear();this.publish();
     if(!this.pending){this.accountChanged=false;void this.refresh();}
    };
   }
   return this.rpc;
  }
- start():void {if(this.active)return;this.active=true;this.generation++;void this.refresh();}
+ start():void {if(this.active)return;this.active=true;this.generation++;if(!this.paused)void this.refresh();}
  refresh():Promise<void> {
   if(!this.active)return Promise.resolve();
   if(this.pending)return this.pending;
@@ -55,8 +58,12 @@ export class CodexController {
    this.state.fail(auth?'터미널에서 codex login을 실행하세요.':'Codex 조회 실패: CLI 설치·네트워크·지원 버전을 확인하세요.',auth?'auth-required':'error');this.publish();
   }
  }
+ /** While the user is away nobody reads the panel: keep the last view and stop scheduling reads. */
+ pause():void {this.paused=true;if(this.timer){GLib.Source.remove(this.timer);this.timer=0;}}
+ resume():void {if(!this.paused)return;this.paused=false;void this.refresh();}
  private schedule():void {
   if(this.timer){GLib.Source.remove(this.timer);this.timer=0;}
+  if(this.paused)return;
   const delay=this.failures?Math.min(900,30*2**Math.min(this.failures-1,5))+Math.floor(Math.random()*10):normalPollSeconds(this.options.pollSeconds);
   this.timer=GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT,delay,()=>{this.timer=0;void this.refresh();return GLib.SOURCE_REMOVE;});
  }
