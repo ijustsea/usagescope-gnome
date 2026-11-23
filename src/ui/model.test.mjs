@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {LowQuotaAlerts, nextUiDeadline, plainText, receiptAge, setupCommands, sourceLabel, quotaRows, cardStatus} from '../../build/ui/model.js';
+import {parseClaudeCliUsage} from '../../build/core/normalize.js';
+import {ProviderState} from '../../build/core/state.js';
 
 const now = 1_800_000_000_000;
 function sample(remaining, sequence, changes = {}) {
@@ -12,11 +14,11 @@ function sample(remaining, sequence, changes = {}) {
     }};
 }
 
-test('Codex alerts cross below 30 once, then rearm only at 35', () => {
+test('Codex alerts at 30 once, then rearm only at 35', () => {
     const alerts = new LowQuotaAlerts();
     assert.equal(alerts.observe(sample(40, 1), now).length, 0);
-    assert.equal(alerts.observe(sample(30, 2), now).length, 0);
-    assert.equal(alerts.observe(sample(29, 3), now).length, 1);
+    assert.equal(alerts.observe(sample(30, 2), now).length, 1);
+    assert.equal(alerts.observe(sample(29, 3), now).length, 0);
     assert.equal(alerts.observe(sample(29, 3), now).length, 0);
     assert.equal(alerts.observe(sample(34, 4), now).length, 0);
     assert.equal(alerts.observe(sample(29, 5), now).length, 0);
@@ -26,9 +28,22 @@ test('Codex alerts cross below 30 once, then rearm only at 35', () => {
 test('Claude reported-value alerts use independent source baseline at 30%',()=>{
  const alerts=new LowQuotaAlerts('claude');
  assert.equal(alerts.observe(sample(45,1,{provider:'claude'}),now).length,0);
- assert.equal(alerts.observe(sample(29,2,{provider:'claude'}),now).length,1);
+ assert.equal(alerts.observe(sample(30,2,{provider:'claude'}),now).length,1);
  assert.equal(alerts.observe(sample(29,3,{provider:'claude'}),now).length,0);
  assert.equal(alerts.observe(sample(10,4,{provider:'claude',sourceId:'other'}),now).length,0);
+});
+test('both providers suppress an initial 30% report until recovery rearms the alert', () => {
+    for (const provider of ['codex', 'claude']) {
+        const alerts = new LowQuotaAlerts(provider);
+        const report = (remaining, sequence) => sample(remaining, sequence, {provider});
+        assert.equal(alerts.observe(report(30, 1), now).length, 0);
+        assert.equal(alerts.observe(report(29, 2), now).length, 0);
+        assert.equal(alerts.observe(report(34, 3), now).length, 0);
+        assert.equal(alerts.observe(report(30, 4), now).length, 0);
+        assert.equal(alerts.observe(report(35, 5), now).length, 0);
+        assert.equal(alerts.observe(report(30, 6), now).length, 1);
+        assert.equal(alerts.observe(report(29, 7), now).length, 0);
+    }
 });
 test('bar rows show actual remaining fraction, 30 is red, expired data is neutral',()=>{
  const row=quotaRows(sample(30,1),now)[0];
@@ -45,6 +60,40 @@ test('many quota buckets cannot inflate the compact two-row card',()=>{
 });
 test('compact status keeps server-reported restriction visible',()=>{
  assert.match(cardStatus(sample(80,1,{allowed:false}),now),/사용 제한/);
+});
+
+test('ready Claude snapshots without quota windows report missing limits even with tier metadata', () => {
+    for (const planType of [null, 'pro', 'max']) {
+        const view = sample(50, 1, {provider: 'claude', planType, windows: []});
+        assert.equal(cardStatus(view, now), '한도 정보 미제공');
+        assert.deepEqual(quotaRows(view, now), []);
+    }
+});
+
+test('Claude CLI missing quotas reach the card through the actual waiting provider state', () => {
+    const snapshot = parseClaudeCliUsage({
+        rate_limits_available: false, rate_limits: null, subscription_type: 'team',
+    }, 'cli-test', now);
+    const view = new ProviderState().accept(snapshot);
+    assert.equal(view.status, 'waiting');
+    assert.equal(view.snapshot.planType, 'team');
+    assert.equal(cardStatus(view, now), '한도 정보 미제공');
+    assert.deepEqual(quotaRows(view, now), []);
+});
+
+test('missing Claude limits status preserves real quota, loading and failure history', () => {
+    assert.equal(cardStatus(sample(50, 1, {provider: 'claude'}), now), '마지막 보고 · 방금');
+    const historical = {...sample(50, 1, {provider: 'claude'}), status: 'waiting'};
+    assert.equal(cardStatus(historical, now), '마지막 보고 · 방금');
+    assert.equal(cardStatus(sample(50, 1, {windows: []}), now), '업데이트 · 방금');
+    const state = new ProviderState();
+    state.accept(parseClaudeCliUsage({
+        rate_limits_available: false, rate_limits: null, subscription_type: 'team',
+    }, 'cli-test', now - 60_000));
+    assert.equal(cardStatus(state.loading(), now), '마지막 보고 · 1분 전');
+    for (const status of ['error', 'unavailable', 'auth-required']) {
+        assert.equal(cardStatus(state.fail('Unavailable', status), now), '마지막 보고 · 1분 전');
+    }
 });
 
 test('initial low sample, wrong provider, reset and source changes never alert', () => {

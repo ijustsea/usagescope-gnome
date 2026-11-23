@@ -1,4 +1,5 @@
 import Clutter from 'gi://Clutter';
+import GObject from 'gi://GObject';
 import St from 'gi://St';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import type {ProviderId, ProviderView} from '../core/types.js';
@@ -15,43 +16,53 @@ function text(actor: St.Label, value: string): void {
     if (actor.get_text() !== safe) actor.set_text(safe);
 }
 
+const QuotaTrack = GObject.registerClass({GTypeName: 'UsageScopeQuotaTrack'}, class QuotaTrack extends St.Widget {
+    readonly fill = new St.Widget({style_class: 'usagescope-fill'});
+    private fraction = 0;
+    constructor() {
+        super({style_class: 'usagescope-track', x_expand: true, min_width: 0, natural_width: 0,
+            layout_manager: new Clutter.FixedLayout()});
+        this.add_child(this.fill);
+    }
+    setFraction(fraction: number): void {
+        this.fraction = fraction;
+        this.queue_relayout();
+    }
+    override vfunc_allocate(box: Clutter.ActorBox): void {
+        super.vfunc_allocate(box);
+        const child = new Clutter.ActorBox();
+        child.set_origin(0, 0);
+        child.set_size(Math.round((box.x2 - box.x1) * this.fraction), box.y2 - box.y1);
+        this.fill.allocate(child);
+    }
+});
+
 class QuotaBar {
     readonly box = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'usagescope-quota'});
     private name = label('', 'usagescope-period');
     private amount = label('', 'usagescope-amount');
-    private track = new St.Widget({style_class: 'usagescope-track', x_expand: true,
-        min_width: 0, natural_width: 0, layout_manager: new Clutter.FixedLayout()});
-    private fill = new St.Widget({style_class: 'usagescope-fill', x_align: Clutter.ActorAlign.START});
-    private fraction = 0;
+    private track = new QuotaTrack();
 
     constructor() {
         const line = new St.BoxLayout({style_class: 'usagescope-quota-line'});
         line.add_child(this.name);
         line.add_child(new St.Widget({x_expand: true}));
         line.add_child(this.amount);
-        this.fill.set_position(0, 0);
-        this.track.add_child(this.fill);
-        this.track.connect('notify::allocation', () => this.sizeFill());
         this.box.add_child(line);
         this.box.add_child(this.track);
         this.box.hide();
     }
-    private sizeFill(): void {
-        const width = Math.max(0, Math.round(this.track.get_width() * this.fraction));
-        if (this.fill.width !== width) this.fill.set_width(width);
-    }
     update(row: QuotaRow | undefined): void {
         this.box.visible = !!row; // Hide the whole layout row, never just its label.
         if (!row) return;
-        this.fraction = row.fraction;
         text(this.name, row.label);
         text(this.amount, row.remainingPercent === null ? '확인 필요'
             : '잔여 ' + Math.round(row.remainingPercent) + '% · 사용 ' + Math.round(row.usedPercent!) + '%');
         const style = 'usagescope-fill usagescope-fill-' + row.tone;
-        if (this.fill.style_class !== style) this.fill.style_class = style;
+        if (this.track.fill.style_class !== style) this.track.fill.style_class = style;
         this.box.accessible_name = row.remainingPercent === null ? row.label + ' 만료: 새 확인 필요'
             : row.label + ' 잔여 ' + Math.round(row.remainingPercent) + '퍼센트, 사용 ' + Math.round(row.usedPercent!) + '퍼센트. ' + row.resetLabel;
-        this.sizeFill();
+        this.track.setFraction(row.fraction);
     }
 }
 

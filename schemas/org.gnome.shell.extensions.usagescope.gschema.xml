@@ -16,11 +16,21 @@
       <summary>Codex executable path</summary>
       <description>Leave blank to find codex in the GNOME Shell PATH, or specify an absolute executable path. Arguments are not accepted.</description>
     </key>
+    <key name="claude-cli-mode" type="b">
+      <default>false</default>
+      <summary>Use the experimental read-only Claude CLI usage interface</summary>
+      <description>Explicit opt-in for Team and other supported accounts. Sends initialize/get_usage control requests only, never a model prompt. Replaces passive statusline monitoring without merging sources.</description>
+    </key>
+    <key name="claude-path" type="s">
+      <default>''</default>
+      <summary>Claude executable for experimental usage queries</summary>
+      <description>Leave empty for PATH or the native ~/.local/bin/claude location. Absolute paths only, no arguments.</description>
+    </key>
     <key name="poll-seconds" type="i">
       <range min="60" max="3600"/>
-      <default>180</default>
-      <summary>Codex polling interval in seconds</summary>
-      <description>Claude is passive and is not polled over the network.</description>
+      <default>60</default>
+      <summary>CLI polling interval in seconds</summary>
+      <description>Codex and opt-in Claude CLI reads share this interval. Passive Claude statusline monitoring does not poll.</description>
     </key>
   </schema>
 </schemalist>

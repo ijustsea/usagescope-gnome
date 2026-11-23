@@ -5,6 +5,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import {CodexController} from './codex/controller.js';
 import {ClaudeController} from './claude/controller.js';
+import {ClaudeCliController} from './claude/cli.js';
 import type {ProviderId, ProviderView} from './core/types.js';
 import {UsageIndicator} from './ui/indicator.js';
 import {LowQuotaAlerts, nextUiDeadline, plainText} from './ui/model.js';
@@ -23,7 +24,7 @@ export default class UsageScopeExtension extends Extension {
     private menuOpen = false;
     private indicator: UsageIndicator | null = null;
     private codex: CodexController | null = null;
-    private claude: ClaudeController | null = null;
+    private claude: ClaudeController | ClaudeCliController | null = null;
     private generations: Record<ProviderId, number> = {codex: 0, claude: 0};
     private views: Record<ProviderId, ProviderView> = {codex: disabled(), claude: disabled()};
     private enabled: Record<ProviderId, boolean> = {codex: false, claude: false};
@@ -44,6 +45,7 @@ export default class UsageScopeExtension extends Extension {
             this.settings = this.getSettings();
             this.indicator = new UsageIndicator({
                 setEnabled: (provider, enabled) => this.settings?.set_boolean(`enable-${provider}`, enabled),
+                setClaudeCliMode: enabled => this.settings?.set_boolean('claude-cli-mode', enabled),
                 openWebsite: provider => this.openWebsite(provider),
                 connectCodex: () => this.connectCodex(),
                 refreshCodex: () => {void this.runCodex('refresh');},
@@ -63,6 +65,13 @@ export default class UsageScopeExtension extends Extension {
                 } else if (key === 'codex-path' || key === 'poll-seconds') {
                     this.stopProvider('codex');
                     this.reconcile('codex');
+                    if (key === 'poll-seconds' && this.settings?.get_boolean('claude-cli-mode')) {
+                        this.stopProvider('claude');
+                        this.reconcile('claude');
+                    }
+                } else if (key === 'claude-cli-mode' || key === 'claude-path') {
+                    this.stopProvider('claude');
+                    this.reconcile('claude');
                 }
                 this.render();
             });
@@ -110,7 +119,13 @@ export default class UsageScopeExtension extends Extension {
                     openUri: uri => this.openLoginUri(uri, generation)});
                 this.codex.start();
             } else {
-                this.claude = new ClaudeController({publish, sourceId: this.claudeSource ?? undefined});
+                if (this.settings.get_boolean('claude-cli-mode')) {
+                    const configured = this.settings.get_string('claude-path');
+                    const native = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'claude']);
+                    const executable = configured || GLib.find_program_in_path('claude') || native;
+                    this.claude = new ClaudeCliController({executable,
+                        pollSeconds: this.settings.get_int('poll-seconds'), publish});
+                } else this.claude = new ClaudeController({publish, sourceId: this.claudeSource ?? undefined});
                 this.claude.start();
             }
         } catch {
@@ -204,6 +219,7 @@ export default class UsageScopeExtension extends Extension {
 
     private async runClaude(action: 'refresh' | 'select', id: string | null = null): Promise<void> {
         if (!this.active || !this.enabled.claude || this.busy.claude || !this.claude) return;
+        if (action === 'select' && !(this.claude instanceof ClaudeController)) return;
         const controller = this.claude;
         const generation = this.generations.claude;
         this.busy.claude = true;
@@ -213,7 +229,7 @@ export default class UsageScopeExtension extends Extension {
         this.render();
         try {
             if (action === 'select') {
-                await controller.selectSource(id);
+                if (controller instanceof ClaudeController) await controller.selectSource(id);
                 if (this.active && generation === this.generations.claude) this.claudeSource = id;
             } else await controller.refresh();
         } catch {
@@ -274,8 +290,8 @@ export default class UsageScopeExtension extends Extension {
             Main.messageTray.add(source);
         }
         this.notificationSource.addNotification(new MessageTray.Notification({
-            source: this.notificationSource, title: `${provider === 'codex' ? 'ChatGPT' : 'Claude'} 잔여량 30% 미만`,
-            body: plainText(`${labels.slice(0, 4).join(', ')} ${provider === 'claude' ? '마지막 보고' : '조회'} 잔여량이 30% 아래로 내려갔습니다.`, 240),
+            source: this.notificationSource, title: `${provider === 'codex' ? 'ChatGPT' : 'Claude'} 잔여량 30% 이하`,
+            body: plainText(`${labels.slice(0, 4).join(', ')} ${provider === 'claude' ? '마지막 보고' : '조회'} 잔여량이 30% 이하입니다.`, 240),
             useBodyMarkup: false, isTransient: true, privacyScope: MessageTray.PrivacyScope.USER,
             urgency: MessageTray.Urgency.NORMAL,
         }));
@@ -286,8 +302,8 @@ export default class UsageScopeExtension extends Extension {
         const now = Date.now();
         this.indicator.update(this.views, this.enabled, this.busy, this.login, now, this.menuOpen);
         if (this.menuOpen) {
-            this.indicator.setSettings(this.settings.get_int('poll-seconds'), this.settings.get_string('codex-path'));
-            this.indicator.setSources(this.claude?.listSources() ?? [], this.views.claude.snapshot?.sourceId ?? this.claudeSource);
+            this.indicator.setSettings(this.settings.get_int('poll-seconds'), this.settings.get_string('codex-path'), this.settings.get_boolean('claude-cli-mode'));
+            this.indicator.setSources(this.claude instanceof ClaudeController ? this.claude.listSources() : [], this.views.claude.snapshot?.sourceId ?? this.claudeSource);
         }
         const deadline = nextUiDeadline(this.views, this.enabled, this.menuOpen, now);
         if (deadline === this.clockDeadline) return;

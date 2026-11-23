@@ -89,9 +89,9 @@ export class LowQuotaAlerts {
             // A changed reset or duration begins a new baseline, never a reset alert.
             const key = JSON.stringify([window.id, window.durationSeconds, window.resetsAt]);
             const previous = this.windows.get(key);
-            let armed = previous?.armed ?? remaining >= 30;
+            let armed = previous?.armed ?? remaining > 30;
             if (remaining >= 35) armed = true;
-            if (previous && armed && previous.remaining >= 30 && remaining < 30) {
+            if (previous && armed && previous.remaining > 30 && remaining <= 30) {
                 alerts.push(window);
                 armed = false;
             }
@@ -140,6 +140,9 @@ export function cardStatus(view: ProviderView, now = Date.now()): string {
         if (view.status === 'error' || view.status === 'unavailable') return '설정에서 연결을 확인하세요';
         return view.status === 'loading' ? '확인 중…' : '사용량 수신 대기';
     }
+    if ((view.status === 'ready' || view.status === 'waiting') &&
+        view.snapshot.provider === 'claude' && !view.snapshot.windows.length)
+        return '한도 정보 미제공';
     const age = receiptAge(view.snapshot.receivedAt, now);
     const translated = age === 'just now' ? '방금'
         : age.replace('m ago', '분 전').replace('h ago', '시간 전').replace('d ago', '일 전');

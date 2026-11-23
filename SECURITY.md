@@ -13,6 +13,7 @@ UsageScope is a local GNOME extension, not a sandbox. GNOME extensions execute i
 | Browser authentication | HTTPS exact-host allowlist auth.openai.com/chatgpt.com; reject userinfo, control characters, backslashes and nonstandard ports; no raw auth URLs logged |
 | Authentication | Official CLIs own credentials; UsageScope does not read auth.json, cookies or tokens |
 | Claude input | Bounded stdin, explicit projection of known quota fields, no transcripts/prompts/working directories persisted |
+| Claude CLI usage (experimental opt-in) | Official SDK control protocol initialize/get_usage only, skip_behaviors=true, no user messages; hooks/MCP/tools/skills/session persistence disabled, neutral cwd, trusted executable, 1MiB frame/4MiB connection/256 message/15s deadline and owned-child cleanup |
 | Subscription tier | Codex reported planType; optional trusted Claude CLI auth/status projection of subscriptionType only, 64 KiB/2.5 s bound and private 300 s profile/CLI-scoped cache. No inference from AI model names and no auth PII stored |
 | Runtime storage | Private owned directories/files, owner/mode checks through ancestors, symlink rejection, immutable snapshots, bounded inventory/retention and own-commit rollback on failed concurrent publication; never a security boundary against same UID |
 | CLI configuration | Explicit preview/apply/restore; private backup; capture-before-validate restoration, exclusive publication and retained recovery archives; unsupported existing shell commands refused; no actual config changes from the panel |
@@ -27,13 +28,15 @@ The opt-in Claude setup helper preserves an exact private backup of existing set
 
 Configuration and runtime ancestor paths must be owned by root or the current user and must not be group/world-writable. Root-owned sticky shared directories (for example `/tmp`) are a limited exception. These checks prevent accepting an obviously replaceable naming chain; they do not eliminate all same-user path races or establish executable authenticity.
 
+The optional Claude CLI usage reader consumes only the known quota/tier fields. Account email/organization returned by the CLI's initialize response are hashed with the profile path in memory solely to distinguish alert baselines; raw account metadata is never logged or stored. Missing identity gets a fresh source baseline. The passive statusline and CLI modes are exclusive. The experimental vendor contract may change or provide no limits; unsupported replies fail closed with no model-prompt fallback. The CLI's own behavior and managed policy remain external trust boundaries.
+
 Restore first captures the settings inode in a private `.usagescope-recovery-*` directory, validates its version/bytes, and publishes originals without overwriting a concurrent file. Captured settings are retained even after success so late writes through an open descriptor remain recoverable. Success also archives the previous setup transaction; conflicts preserve the live wrapper and retain recovery data instead of overwriting edits. There are at most 16 recovery archives and a bounded configuration-directory scan. Archives persist until the user inspects them; they can contain sensitive settings and must not be uploaded. This is a recovery protocol, not a lock against arbitrary same-user editors.
 
 ## Behaviors intentionally excluded
 
 No custom backend, analytics, self-update, downloaded code execution, remote scripts, cookie extraction, model prompts or automatic dependency installation. Missing/expired quotas never imply 100% remaining. Account/session data is never merged or summed. Repeated receipt does not prove fresh server observation.
 
-Website buttons open fixed official URLs only; they neither enable acquisition nor establish local CLI authentication. Claude alerts describe the last reported quota, not a freshly verified server reading. Newly received threshold crossings below 30% notify once, with recovery at 35% required to rearm; stale, repeated, expired or first samples do not alert.
+Website buttons open fixed official URLs only; they neither enable acquisition nor establish local CLI authentication. Claude alerts describe the last reported quota, not a freshly verified server reading. Newly received threshold crossings to 30% or below notify once, with recovery at 35% required to rearm; stale, repeated, expired or first samples do not alert.
 
 ## Verification
 

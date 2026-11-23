@@ -60,3 +60,35 @@ export function parseClaudeUsage(payload:unknown,sourceId:string,receivedAt:numb
  }
  return result;
 }
+
+/** Official SDK get_usage response; experimental and separate from statusline JSON. */
+export function parseClaudeCliUsage(payload:unknown,sourceId:string,receivedAt:number):UsageSnapshot {
+ const p=object(payload);const result=base('claude',sourceId,receivedAt);
+ result.planType=planName('claude',p.subscription_type)?.toLowerCase()??null;
+ if(typeof p.rate_limits_available!=='boolean')throw new Error('Unknown Claude CLI usage contract');
+ if(p.rate_limits==null)return result;
+ if(!p.rate_limits_available)throw new Error('Contradictory Claude CLI availability');
+ const limits=object(p.rate_limits);
+ const isoReset=(value:unknown):number|null=>{
+  if(value==null)return null;
+  if(typeof value!=='string'||value.length>40||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value))throw new Error('Invalid CLI reset');
+  return reset(Math.floor(Date.parse(value)/1000));
+ };
+ for(const [key,seconds,label] of [['five_hour',18000,'5h'],['seven_day',604800,'7d']] as const){
+  if(limits[key]==null)continue;
+  const w=object(limits[key]);if(w.utilization===null)continue;
+  result.windows.push({id:'claude-cli:'+key,label,durationSeconds:seconds,usedPercent:percent(w.utilization),resetsAt:isoReset(w.resets_at)});
+ }
+ if(limits.limits!=null){
+  if(!Array.isArray(limits.limits)||limits.limits.length>64)throw new Error('Too many CLI usage meters');
+  if(!result.windows.length){
+   const seen=new Set<string>();
+   for(const value of limits.limits){
+    const w=object(value);if(w.kind!=='session'&&w.kind!=='weekly_all')continue;
+    if(seen.has(w.kind))throw new Error('Ambiguous CLI usage meter');seen.add(w.kind);
+    result.windows.push({id:'claude-cli:'+w.kind,label:w.kind==='session'?'세션':'주간',durationSeconds:null,usedPercent:percent(w.percent),resetsAt:isoReset(w.resets_at)});
+   }
+  }
+ }
+ return result;
+}
