@@ -3,6 +3,9 @@ import readline from 'node:readline';
 import {appendFileSync,writeFileSync} from 'node:fs';
 if(process.env.USAGESCOPE_TEST_PID)writeFileSync(process.env.USAGESCOPE_TEST_PID,String(process.pid),{mode:0o600});
 const mode=process.env.USAGESCOPE_TEST_MODE ?? 'normal';
+// Quota reads must not run Codex plugin/marketplace sync (per-process overrides, before the subcommand).
+const argv=process.argv.slice(2).join(' ');
+if(!argv.startsWith('-c features.plugins=false -c features.remote_plugin=false app-server'))process.exit(2);
 const input=readline.createInterface({input:process.stdin});
 input.on('close',()=>{
  if(process.env.USAGESCOPE_TEST_EOF)writeFileSync(process.env.USAGESCOPE_TEST_EOF,'eof',{mode:0o600});
@@ -23,16 +26,16 @@ input.on('line',line=>{
  if(r.method==='initialize') result={userAgent:'test'};
  if(r.method==='account/read') result={account:{type:'chatgpt',id:'fake-account'}};
  if(r.method==='account/rateLimits/read') result={accountId:'fake-account',rateLimits:{primary:{usedPercent:25,windowDurationMins:300,resetsAt:2000000000}},ordinaryUsageAllowed:true};
- if(r.method==='account/rateLimits/read' && mode==='compact-ui')result.rateLimits={planType:'plus',primary:{usedPercent:97,windowDurationMins:300,resetsAt:2000000000},secondary:{usedPercent:21,windowDurationMins:10080,resetsAt:2000000000}};
+ if(r.method==='account/rateLimits/read' && mode==='compact-ui'){
+  // Realistic resets relative to now, including the widest countdown (6d 23h).
+  const now=Math.floor(Date.now()/1000);
+  result.rateLimits={planType:'plus',primary:{usedPercent:97,windowDurationMins:300,resetsAt:now+4*3600+30*60+50},secondary:{usedPercent:21,windowDurationMins:10080,resetsAt:now+6*86400+23*3600+50*60}};
+ }
  if(r.method==='account/rateLimits/read' && mode==='switch-account') {
   quotaReads++;
   if(quotaReads===1)console.log(JSON.stringify({method:'account/updated',params:{authMode:'chatgpt'}}));
   else result.accountId='new-account';
  }
- if(r.method==='account/login/start') result={type:'chatgpt',loginId:'test-login',authUrl:mode==='evil-url'?'https://evil.invalid/':'https://auth.openai.com/authorize?state=test'};
- const reply=()=>{
-  console.log(JSON.stringify({id:r.id,result}));
-  if(mode==='failed-login'&&r.method==='account/login/start')setTimeout(()=>console.log(JSON.stringify({method:'account/login/completed',params:{loginId:'test-login',success:false}})),30);
- };
- if(mode==='delayed-login' && r.method==='account/login/start')setTimeout(reply,150);else reply();
+ if(r.method==='account/rateLimits/read' && mode==='signed-out'){console.log(JSON.stringify({id:r.id,error:{code:-32600,message:'Not logged in. Run codex login.'}}));return;}
+ console.log(JSON.stringify({id:r.id,result}));
 });

@@ -1,5 +1,6 @@
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
+import Pango from 'gi://Pango';
 import St from 'gi://St';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import type {ProviderId, ProviderView} from '../core/types.js';
@@ -40,12 +41,20 @@ const QuotaTrack = GObject.registerClass({GTypeName: 'UsageScopeQuotaTrack'}, cl
 class QuotaBar {
     readonly box = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'usagescope-quota'});
     private name = label('', 'usagescope-period');
+    private reset = label('', 'usagescope-reset');
     private amount = label('', 'usagescope-amount');
     private track = new QuotaTrack();
 
     constructor() {
         const line = new St.BoxLayout({style_class: 'usagescope-quota-line'});
-        line.add_child(this.name);
+        const title = new St.BoxLayout({style_class: 'usagescope-quota-title'});
+        // A tight row truncates with an ellipsis inside the card instead of overflowing it;
+        // test:shell asserts no label is truncated at the tested sizes.
+        this.reset.y_align = Clutter.ActorAlign.CENTER;
+        this.reset.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        title.add_child(this.name);
+        title.add_child(this.reset);
+        line.add_child(title);
         line.add_child(new St.Widget({x_expand: true}));
         line.add_child(this.amount);
         this.box.add_child(line);
@@ -56,12 +65,15 @@ class QuotaBar {
         this.box.visible = !!row; // Hide the whole layout row, never just its label.
         if (!row) return;
         text(this.name, row.label);
+        this.reset.visible = !!row.resetIn;
+        text(this.reset, row.resetIn ? '· ' + row.resetIn + ' 후' : '');
         text(this.amount, row.remainingPercent === null ? '확인 필요'
             : '잔여 ' + Math.round(row.remainingPercent) + '% · 사용 ' + Math.round(row.usedPercent!) + '%');
         const style = 'usagescope-fill usagescope-fill-' + row.tone;
         if (this.track.fill.style_class !== style) this.track.fill.style_class = style;
         this.box.accessible_name = row.remainingPercent === null ? row.label + ' 만료: 새 확인 필요'
-            : row.label + ' 잔여 ' + Math.round(row.remainingPercent) + '퍼센트, 사용 ' + Math.round(row.usedPercent!) + '퍼센트. ' + row.resetLabel;
+            : row.label + ' 잔여 ' + Math.round(row.remainingPercent) + '퍼센트, 사용 ' + Math.round(row.usedPercent!) + '퍼센트. '
+                + (row.resetIn ? row.resetIn + ' 후 초기화, ' : '') + row.resetLabel;
         this.track.setFraction(row.fraction);
     }
 }
@@ -84,8 +96,8 @@ export class ProviderCard {
         const footer = new St.BoxLayout({style_class: 'usagescope-card-footer', y_align: Clutter.ActorAlign.CENTER});
         footer.add_child(this.status);
         footer.add_child(new St.Widget({x_expand: true}));
-        const link = new St.Button({label: '로그인 / 가입 ↗', style_class: 'usagescope-link', can_focus: true,
-            accessible_name: name + ' 공식 웹사이트 로그인 및 가입'});
+        const link = new St.Button({label: '공식 홈페이지 ↗', style_class: 'usagescope-link', can_focus: true,
+            accessible_name: name + ' 공식 홈페이지 열기'});
         link.connect('clicked', () => openWebsite(provider));
         footer.add_child(link);
         this.body.add_child(footer);

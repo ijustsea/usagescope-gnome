@@ -17,16 +17,6 @@ export function receiptAge(receivedAt: number, now = Date.now()): string {
     return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-export function sourceLabel(id: string): string {
-    const safe = plainText(id, 256);
-    return safe.length > 22 ? `${safe.slice(0, 12)}…${safe.slice(-6)}` : safe;
-}
-
-export function setupCommands(extensionPath: string): [string, string] {
-    const quoted = `'${`${extensionPath}/claude/setup.js`.replace(/'/g, "'\\''")}'`;
-    return [`gjs -m ${quoted} --preview`, `gjs -m ${quoted} --apply`];
-}
-
 /** Closed menus need only the next change that can affect panel text. */
 export function nextUiDeadline(views: Record<ProviderId, ProviderView>,
     enabled: Record<ProviderId, boolean>, menuOpen: boolean, now = Date.now()): number | null {
@@ -38,7 +28,7 @@ export function nextUiDeadline(views: Record<ProviderId, ProviderView>,
         const snapshot = view.snapshot;
         if (!snapshot) continue;
         const staleAt = snapshot.receivedAt + 360_001;
-        if (provider === 'codex' && view.status === 'ready' && staleAt > now)
+        if (view.status === 'ready' && staleAt > now)
             deadline = Math.min(deadline, staleAt);
         for (const window of snapshot.windows) {
             if (window.resetsAt !== null && window.resetsAt * 1000 > now)
@@ -109,6 +99,21 @@ export interface QuotaRow {
     fraction: number;
     tone: 'codex' | 'claude' | 'danger' | 'muted';
     resetLabel: string;
+    /** Time left until the reset, e.g. '4h 30m'; empty when unknown or already reset. */
+    resetIn: string;
+}
+
+/** Rounds down, so at render time it never shows more than is left; open-menu renders are 30 s apart. */
+export function resetCountdown(resetsAt: number | null, now = Date.now()): string {
+    if (resetsAt === null) return '';
+    const left = resetsAt * 1000 - now;
+    if (!(left > 0)) return '';
+    const minutes = Math.floor(left / 60_000);
+    if (minutes < 1) return '<1m';
+    const days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60), rest = minutes % 60;
+    if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+    if (hours) return rest ? `${hours}h ${rest}m` : `${hours}h`;
+    return `${rest}m`;
 }
 
 /** A card has at most two real quota rows; no placeholders occupy extra height. */
@@ -129,6 +134,7 @@ export function quotaRows(view: ProviderView, now = Date.now()): QuotaRow[] {
             tone: expired ? 'muted' : remaining <= 30 ? 'danger' : view.snapshot!.provider,
             resetLabel: expired ? '새 확인 필요' : window.resetsAt === null ? ''
                 : new Date(window.resetsAt * 1000).toLocaleString([], {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' 초기화 예정',
+            resetIn: expired ? '' : resetCountdown(window.resetsAt, now),
         };
     });
 }
@@ -136,17 +142,19 @@ export function quotaRows(view: ProviderView, now = Date.now()): QuotaRow[] {
 export function cardStatus(view: ProviderView, now = Date.now()): string {
     if (view.status === 'disabled') return '모니터링 꺼짐';
     if (!view.snapshot) {
-        if (view.status === 'auth-required') return 'CLI 로그인이 필요합니다';
-        if (view.status === 'error' || view.status === 'unavailable') return '설정에서 연결을 확인하세요';
-        return view.status === 'loading' ? '확인 중…' : '사용량 수신 대기';
+        if (view.status === 'auth-required') return '터미널에서 CLI 로그인 필요';
+        if (view.status === 'unavailable') return '공식 CLI를 찾을 수 없음';
+        if (view.status === 'error') return '조회 실패 · CLI 로그인 확인';
+        return view.status === 'loading' ? '확인 중…' : '조회 대기';
     }
-    if ((view.status === 'ready' || view.status === 'waiting') &&
-        view.snapshot.provider === 'claude' && !view.snapshot.windows.length)
+    if ((view.status === 'ready' || view.status === 'waiting') && !view.snapshot.windows.length)
         return '한도 정보 미제공';
     const age = receiptAge(view.snapshot.receivedAt, now);
     const translated = age === 'just now' ? '방금'
         : age.replace('m ago', '분 전').replace('h ago', '시간 전').replace('d ago', '일 전');
+    // Retained history must not hide that the CLI has since been signed out.
+    if (view.status === 'auth-required') return 'CLI 로그인 필요 · ' + translated;
     if (view.snapshot.provider === 'codex' && view.snapshot.allowed === false)
         return (view.status === 'ready' ? '사용 제한 · ' : '이전 제한 보고 · ') + translated;
-    return (view.snapshot.provider === 'claude' ? '마지막 보고 · ' : view.status === 'ready' ? '업데이트 · ' : '이전 조회 · ') + translated;
+    return (view.status === 'ready' ? '업데이트 · ' : '이전 조회 · ') + translated;
 }

@@ -12,7 +12,9 @@ test('archive is repeatable and ships runtime code without developer data or bin
  run();assert.equal(createHash('sha256').update(await readFile(path)).digest('hex'),first);
  const list=spawnSync('unzip',['-Z1',path],{encoding:'utf8'});assert.equal(list.status,0);
  const files=list.stdout.trim().split('\n');
- assert(files.includes('extension.js'));assert(files.includes('claude/bridge.js'));assert(files.includes('schemas/gschemas.compiled'));
+ assert(files.includes('extension.js'));assert(files.includes('claude/cli.js'));assert(files.includes('schemas/gschemas.compiled'));
+ // Retired statusline bridge/setup and its runtime storage must not ship.
+ assert.deepEqual(files.filter(p=>p.startsWith('claude/')),['claude/cli.js']);
  assert(!files.some(p=>p.startsWith('/')||p.split('/').includes('..')||/node_modules|\.git\/|auth\.json|credentials|\.ts$|\.mjs$/.test(p)));
  assert(files.every(p=>/\.js$|\.css$|\.xml$|\.json$|gschemas\.compiled$|^LICENSE$/.test(p)));
 });

@@ -4,33 +4,28 @@
     <key name="enable-codex" type="b">
       <default>false</default>
       <summary>Enable Codex monitoring</summary>
-      <description>Query local Codex usage only after opting in. Disabling monitoring does not log out.</description>
+      <description>Query usage through the official Codex CLI's existing sign-in only after opting in. Disabling monitoring does not log out.</description>
     </key>
     <key name="enable-claude" type="b">
       <default>false</default>
       <summary>Enable Claude monitoring</summary>
-      <description>Watch locally exported Claude snapshots only after opting in. Disabling monitoring does not log out.</description>
+      <description>Query usage through the official Claude CLI's existing sign-in only after opting in. Sends initialize/get_usage control requests only, never a model prompt. Disabling monitoring does not log out.</description>
     </key>
     <key name="codex-path" type="s">
       <default>''</default>
       <summary>Codex executable path</summary>
-      <description>Leave blank to find codex in the GNOME Shell PATH, or specify an absolute executable path. Arguments are not accepted.</description>
-    </key>
-    <key name="claude-cli-mode" type="b">
-      <default>false</default>
-      <summary>Use the experimental read-only Claude CLI usage interface</summary>
-      <description>Explicit opt-in for Team and other supported accounts. Sends initialize/get_usage control requests only, never a model prompt. Replaces passive statusline monitoring without merging sources.</description>
+      <description>Leave empty for PATH or the native ~/.local/bin/codex location. Absolute paths only, no arguments.</description>
     </key>
     <key name="claude-path" type="s">
       <default>''</default>
-      <summary>Claude executable for experimental usage queries</summary>
+      <summary>Claude executable path</summary>
       <description>Leave empty for PATH or the native ~/.local/bin/claude location. Absolute paths only, no arguments.</description>
     </key>
     <key name="poll-seconds" type="i">
       <range min="15" max="3600"/>
       <default>60</default>
       <summary>CLI polling interval in seconds</summary>
-      <description>Codex and opt-in Claude CLI reads share this interval. Passive Claude statusline monitoring does not poll.</description>
+      <description>Codex and Claude CLI reads share this interval. The menu offers 15, 60 or 300 seconds; other stored values snap to the next offered choice, at most 300.</description>
     </key>
   </schema>
 </schemalist>

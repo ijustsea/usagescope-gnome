@@ -4,10 +4,11 @@
 - Runtime code is TypeScript emitted as readable GJS ESM. Node is development-only.
 - Read the design and implementation progress before changing provider boundaries.
 - Never add model-turn/thread, token-export, credit-consumption RPCs or credential-file reads.
-- Never auto-enable an extension, apply real Claude settings, start sign-in or install dependencies for the user without the corresponding requested action.
-- Use argument vectors and the shared trusted executable resolver. Authentication URLs must pass the exact official HTTPS host policy.
-- Keep acquisition off by default. Claude statusline is the default; separate opt-in experimental CLI mode may send initialize/get_usage control requests only with skip_behaviors=true, never user/model messages or /usage prompts. Never blend CLI and passive sources. Subscription metadata is not a server-freshness guarantee.
-- Compact UI uses subscription tiers, not AI model names. Both providers warn on crossing to <=30% remaining; <=30% bars are red, recovery >=35% rearms alerts. Initial low samples do not alert.
+- Never auto-enable an extension, change Claude/Codex CLI settings, start sign-in or install dependencies for the user. Sign-in stays in the official CLIs' terminal commands.
+- Use argument vectors and the shared trusted executable resolver. Both CLIs resolve the same way: configured absolute path, else PATH, else ~/.local/bin. Website buttons open fixed official URLs only on click.
+- Keep acquisition off by default. Usage comes only from the official CLIs' existing sign-in: Codex App Server account/rateLimits/read, Claude initialize/get_usage(skip_behaviors=true) control requests with DISABLE_TELEMETRY=1 and DISABLE_ERROR_REPORTING=1. Never set (and unset) CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: it stops get_usage from fetching, so it serves up-to-1-hour-old cached limits or none. Never send user/model messages or /usage prompts, and do not add a passive/statusline source. Subscription metadata is not a server-freshness guarantee.
+- Do not impose load or side effects on the user's environment: no token-consuming calls, no automatic browser launch or refresh, no resident CLI process between polls. Pause reads after 5 idle minutes and resume on input. Quota-only Codex processes run with per-process `-c features.plugins=false -c features.remote_plugin=false` (never persisted).
+- Compact UI uses subscription tiers, not AI model names. Settings must fit without scrolling; test:shell asserts it (default 1280x720, also run USAGESCOPE_TEST_MONITOR=1024x480). Both providers warn on crossing to <=30% remaining; <=30% bars are red, recovery >=35% rearms alerts. Initial low samples do not alert.
 - Run npm run check; for actor/lifecycle changes also npm run test:shell (isolated configuration).
 - Package runtime files through the source-derived manifest. Do not copy build/ wholesale.
 - Do not claim malware clearance or faster/lower-resource behavior without applicable evidence.

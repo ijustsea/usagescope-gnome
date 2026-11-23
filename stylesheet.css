@@ -7,6 +7,7 @@
 .usagescope-plan { padding: 2px 7px; border-radius: 8px; background-color: rgba(128, 128, 128, 0.15); font-size: 11px; }
 .usagescope-quota { spacing: 4px; }
 .usagescope-quota-line { spacing: 8px; }
+.usagescope-quota-title { spacing: 4px; }
 .usagescope-period { font-size: 12px; }
 .usagescope-amount { font-size: 12px; font-weight: bold; }
 .usagescope-track { height: 8px; border-radius: 4px; background-color: rgba(128, 128, 128, 0.25); }
@@ -20,7 +21,8 @@
 .usagescope-link { padding: 3px 0 3px 6px; font-size: 11px; color: #99c1f1; border-radius: 4px; }
 .usagescope-link:hover, .usagescope-link:focus { background-color: rgba(128, 128, 128, 0.2); }
 .usagescope-note { max-width: 300px; font-size: 11px; color: #9a9996; }
-.usagescope-path { width: 280px; }
-.usagescope-disclosure { border: 1px solid transparent; border-radius: 4px; }
-.usagescope-disclosure:hover { background-color: rgba(128, 128, 128, 0.2); }
-.usagescope-disclosure:focus { background-color: rgba(128, 128, 128, 0.2); border-color: #99c1f1; }
+.usagescope-intervals { spacing: 4px; }
+.usagescope-interval { padding: 4px 0; font-size: 12px; border-radius: 6px; border: 1px solid transparent; background-color: rgba(128, 128, 128, 0.15); }
+.usagescope-interval:hover { background-color: rgba(128, 128, 128, 0.3); }
+.usagescope-interval:focus { border-color: #99c1f1; }
+.usagescope-interval:checked { background-color: #3584e4; color: #ffffff; }

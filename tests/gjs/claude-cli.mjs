@@ -13,6 +13,7 @@ const run=async()=>{
  const snapshot=await readClaudeCliUsage(exe,new Gio.Cancellable(),1000);
  assert(snapshot.planType==='team'&&snapshot.windows.length===2,'real pipes normalize Team quota');
  assert(snapshot.windows[0].usedPercent===0&&snapshot.windows[1].usedPercent===38,'zero and weekly values preserved');
+ assert(snapshot.windows[0].resetsAt===1893456000,'microsecond offset reset parsed by GJS');
  assert(!JSON.stringify(snapshot).includes('fixture@example'),'raw account metadata never retained');
  assert(/^[a-f0-9]{64}$/.test(snapshot.accountId),'identity is an opaque digest');
  const messages=read(root+'/trace').trim().split('\n').map(JSON.parse);
@@ -34,6 +35,16 @@ const run=async()=>{
  }
  GLib.setenv('USAGESCOPE_CLAUDE_TEST_MODE','unavailable',true);
  assert((await readClaudeCliUsage(exe,new Gio.Cancellable(),1000)).windows.length===0,'missing quota stays missing');
+ GLib.setenv('USAGESCOPE_CLAUDE_TEST_MODE','signed-out',true);
+ try{file(root+'/trace').delete(null);}catch{}
+ let signedOut=null;try{await readClaudeCliUsage(exe,new Gio.Cancellable(),1000);}catch(e){signedOut=e;}
+ assert(signedOut?.message==='Claude CLI is not signed in','signed-out CLI is reported as sign-in required, not as missing limits');
+ assert(read(root+'/trace').trim().split('\n').length===1,'signed-out read stops after initialize');
+ file(root+'/trace').delete(null);
+ const signedView=[];const signedController=new ClaudeCliController({executable:exe,pollSeconds:60,publish:v=>signedView.push(v)});
+ signedController.start();await signedController.refresh();
+ assert(signedView.at(-1).status==='auth-required'&&signedController.timer!==0,'controller shows sign-in requirement and keeps retrying');
+ signedController.stop();
  GLib.setenv('USAGESCOPE_CLAUDE_TEST_MODE','unknown-account',true);
  const a=await readClaudeCliUsage(exe,new Gio.Cancellable(),1000),b=await readClaudeCliUsage(exe,new Gio.Cancellable(),1000);
  assert(a.sourceId!==b.sourceId,'unknown identity starts a fresh alert baseline');
@@ -44,6 +55,15 @@ const run=async()=>{
  let latest=null;
  const controller=new ClaudeCliController({executable:exe,pollSeconds:60,publish:view=>{latest=view;}});
  controller.start();await controller.refresh();assert(latest.status==='ready'&&latest.snapshot.planType==='team','controller publishes usage');
+ controller.pause();assert(controller.timer===0,'pause cancels the next scheduled read');
+ await controller.refresh();assert(controller.timer===0,'a read while paused schedules nothing further');
+ const beforeResume=latest.snapshot.receivedAt;controller.resume();
+ assert(controller.pending!==null,'resume starts a read at once');await controller.pending;
+ assert(latest.status==='ready'&&latest.snapshot.receivedAt>beforeResume&&controller.timer!==0,'resume reads at once and restores the interval');
+ const idleStart=new ClaudeCliController({executable:exe,pollSeconds:60,publish:()=>{}});
+ idleStart.pause();idleStart.start();
+ assert(idleStart.pending===null&&idleStart.timer===0,'a provider started while paused does not read');
+ idleStart.resume();assert(idleStart.pending!==null,'its first read waits for resume');await idleStart.pending;idleStart.stop();
  controller.stop();assert(latest.status==='disabled','stop clears view');
  await controller.refresh();assert(latest.status==='disabled','stopped controller cannot revive');
  for(const key of ['USAGESCOPE_CLAUDE_TEST_TRACE','USAGESCOPE_CLAUDE_TEST_PID'])GLib.unsetenv(key);

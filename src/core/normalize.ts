@@ -47,21 +47,7 @@ export function parseCodexUsage(payload:unknown,sourceId:string,receivedAt:numbe
  if(!buckets.some(([key])=>key==='codex')&&!unknownPlan&&new Set(plans).size===1)result.planType=plans[0]!;
  return result;
 }
-export function parseClaudeUsage(payload:unknown,sourceId:string,receivedAt:number):UsageSnapshot {
- const p=object(payload); const result=base('claude',sourceId,receivedAt);
- // This is our stored projection, not the raw Claude statusline input contract.
- result.planType=planName('claude',p.subscription_type)?.toLowerCase()??null;
- if(p.rate_limits==null) return result;
- const limits=object(p.rate_limits);
- for(const [key,seconds,label] of [['five_hour',18000,'5h'],['seven_day',604800,'7d']] as const) {
-  if(limits[key]==null) continue;
-  const w=object(limits[key]);
-  result.windows.push({id:key,label,durationSeconds:seconds,usedPercent:percent(w.used_percentage),resetsAt:reset(w.resets_at)});
- }
- return result;
-}
-
-/** Official SDK get_usage response; experimental and separate from statusline JSON. */
+/** Official SDK get_usage response; the vendor labels this control interface experimental. */
 export function parseClaudeCliUsage(payload:unknown,sourceId:string,receivedAt:number):UsageSnapshot {
  const p=object(payload);const result=base('claude',sourceId,receivedAt);
  result.planType=planName('claude',p.subscription_type)?.toLowerCase()??null;
@@ -71,7 +57,7 @@ export function parseClaudeCliUsage(payload:unknown,sourceId:string,receivedAt:n
  const limits=object(p.rate_limits);
  const isoReset=(value:unknown):number|null=>{
   if(value==null)return null;
-  if(typeof value!=='string'||value.length>40||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value))throw new Error('Invalid CLI reset');
+  if(typeof value!=='string'||value.length>40||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value))throw new Error('Invalid CLI reset');
   return reset(Math.floor(Date.parse(value)/1000));
  };
  for(const [key,seconds,label] of [['five_hour',18000,'5h'],['seven_day',604800,'7d']] as const){
