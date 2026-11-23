@@ -3,8 +3,8 @@ export const MAX_CONNECTION_BYTES=4*1024*1024;
 export const MAX_CONNECTION_MESSAGES=256;
 export const MAX_INPUT_BYTES=256*1024;
 export function websiteUrl(provider:unknown):string {
- if(provider==='codex')return 'https://chatgpt.com/auth/login';
- if(provider==='claude')return 'https://claude.ai/login';
+ if(provider==='codex')return 'https://chatgpt.com/';
+ if(provider==='claude')return 'https://claude.ai/';
  throw new Error('Unknown provider');
 }
 // Read-only quota access. Sign-in stays in the official CLI's own terminal command.

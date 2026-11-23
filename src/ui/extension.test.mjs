@@ -4,6 +4,7 @@ import {test} from 'node:test';
 import {stripTypeScriptTypes} from 'node:module';
 import {nextUiDeadline} from '../../build/ui/model.js';
 import {websiteUrl} from '../../build/core/policy.js';
+import {normalPollSeconds} from '../../build/core/polling.js';
 
 // Exercise the extension's actual orchestration. Only Shell actors, settings and
 // provider I/O are replaced; the isolated Shell smoke covers real actor teardown.
@@ -53,8 +54,8 @@ function harness({programs = {codex: '/usr/bin/codex', claude: '/usr/bin/claude'
     }};
     const Main = {panel: {addToStatusArea() {}}, messageTray: {add() {}}};
     const Extension = new Function('Gio', 'GLib', 'Extension', 'Main', 'MessageTray', 'CodexController',
-        'ClaudeCliController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', 'websiteUrl', emitted)(
-        Gio, GLib, Base, Main, {}, Codex, Claude, Indicator, Alerts, nextUiDeadline, value => value, websiteUrl);
+        'ClaudeCliController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', 'websiteUrl', 'normalPollSeconds', emitted)(
+        Gio, GLib, Base, Main, {}, Codex, Claude, Indicator, Alerts, nextUiDeadline, value => value, websiteUrl, normalPollSeconds);
     h.extension = new Extension();
     h.extension.enable();
     return h;
@@ -88,7 +89,7 @@ test('defaults acquire nothing; disable synchronously removes owned UI and timer
 test('website links do not enable monitoring or claim local CLI authentication',()=>{
  const h=harness();
  h.actions.openWebsite('codex');h.actions.openWebsite('claude');
- assert.deepEqual(h.launches,['https://chatgpt.com/auth/login','https://claude.ai/login']);
+ assert.deepEqual(h.launches,['https://chatgpt.com/','https://claude.ai/']);
  assert.equal(h.codex.length,0);assert.equal(h.claude.length,0);
  h.extension.disable();h.actions.openWebsite('codex');assert.equal(h.launches.length,2);
 });
@@ -160,6 +161,12 @@ test('a path change restarts only that provider',()=>{
  h.values['codex-path']='/opt/codex';h.extension.settings.changed(null,'codex-path');
  assert.equal(h.codex.length,2);assert.equal(h.codex[1].options.executable,'/opt/codex');
  assert.equal(h.claude.length,1);assert.equal(h.claude[0].stopped,undefined);
+ h.extension.disable();
+});
+test('an interval stored by an older version is shown as its snapped choice',()=>{
+ const h=harness();h.values['poll-seconds']=180;
+ h.actions.menuStateChanged(true);assert.equal(h.pollSeconds,300);
+ h.values['poll-seconds']=15;h.actions.menuStateChanged(true);assert.equal(h.pollSeconds,15);
  h.extension.disable();
 });
 test('interval preferences acquire nothing until monitoring is enabled',()=>{

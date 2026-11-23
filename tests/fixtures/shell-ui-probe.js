@@ -84,7 +84,7 @@ UsageScopeExtension.prototype.enable = function () {
             report.settings.controls=[];
             const controls=item=>{
                 const title=typeof item.get_text==='function'?item.get_text().replace(/ [▸▾]$/u,''):'';
-                if(item.mapped&&['Refresh','15초','1시간'].includes(title)){
+                if(item.mapped&&['Refresh','15초','5분'].includes(title)){
                     const [,controlY]=item.get_transformed_position();
                     if(!report.settings.controls.some(control=>control.text===title))
                         report.settings.controls.push({text:title,y:controlY,height:item.height});

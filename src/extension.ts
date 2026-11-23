@@ -9,6 +9,7 @@ import type {ProviderId, ProviderView} from './core/types.js';
 import {UsageIndicator} from './ui/indicator.js';
 import {LowQuotaAlerts, nextUiDeadline, plainText} from './ui/model.js';
 import {websiteUrl} from './core/policy.js';
+import {normalPollSeconds} from './core/polling.js';
 
 function disabled(): ProviderView {
     return {status: 'disabled', snapshot: null, message: 'Monitoring off; CLI sign-in is unchanged.'};
@@ -185,7 +186,7 @@ export default class UsageScopeExtension extends Extension {
         if (!this.active || !this.indicator || !this.settings) return;
         const now = Date.now();
         this.indicator.update(this.views, this.enabled, this.busy, now, this.menuOpen);
-        if (this.menuOpen) this.indicator.setPollSeconds(this.settings.get_int('poll-seconds'));
+        if (this.menuOpen) this.indicator.setPollSeconds(normalPollSeconds(this.settings.get_int('poll-seconds')));
         const deadline = nextUiDeadline(this.views, this.enabled, this.menuOpen, now);
         if (deadline === this.clockDeadline) return;
         if (this.clockSource) GLib.Source.remove(this.clockSource);

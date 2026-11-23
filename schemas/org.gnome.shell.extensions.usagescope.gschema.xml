@@ -25,7 +25,7 @@
       <range min="15" max="3600"/>
       <default>60</default>
       <summary>CLI polling interval in seconds</summary>
-      <description>Codex and Claude CLI reads share this interval.</description>
+      <description>Codex and Claude CLI reads share this interval. The menu offers 15, 60 or 300 seconds; other stored values snap to the next offered choice, at most 300.</description>
     </key>
   </schema>
 </schemalist>

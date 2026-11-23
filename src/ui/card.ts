@@ -96,8 +96,8 @@ export class ProviderCard {
         const footer = new St.BoxLayout({style_class: 'usagescope-card-footer', y_align: Clutter.ActorAlign.CENTER});
         footer.add_child(this.status);
         footer.add_child(new St.Widget({x_expand: true}));
-        const link = new St.Button({label: '로그인 / 가입 ↗', style_class: 'usagescope-link', can_focus: true,
-            accessible_name: name + ' 공식 웹사이트 로그인 및 가입'});
+        const link = new St.Button({label: '공식 홈페이지 ↗', style_class: 'usagescope-link', can_focus: true,
+            accessible_name: name + ' 공식 홈페이지 열기'});
         link.connect('clicked', () => openWebsite(provider));
         footer.add_child(link);
         this.body.add_child(footer);
