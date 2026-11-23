@@ -30,8 +30,38 @@ UsageScopeExtension.prototype.enable = function () {
                 for (const child of item.get_children()) walk(child);
             };
             walk(actor);
+            // Every quota row label must stay inside its card, unclipped and without overlapping.
+            const rows=[];
+            const visitRows=item=>{
+                if(item.mapped&&item.has_style_class_name?.('usagescope-quota-line')){
+                    let card=item.get_parent();
+                    while(card&&!card.has_style_class_name?.('usagescope-card'))card=card.get_parent();
+                    const [cardX]=card.get_transformed_position();
+                    const labels=[];
+                    const collect=node=>{
+                        if(node.mapped&&node instanceof St.Label){
+                            const [labelX]=node.get_transformed_position();
+                            labels.push({text:node.get_text(),x:labelX,width:node.width,
+                                ellipsized:node.clutter_text.get_layout().is_ellipsized()});
+                        }
+                        for(const child of node.get_children())collect(child);
+                    };
+                    collect(item);
+                    rows.push({cardX,cardWidth:card.width,labels});
+                }
+                for(const child of item.get_children())visitRows(child);
+            };
+            visitRows(actor);
             const report = {x,y,width:actor.width,height:actor.height,stageHeight:global.stage.height,
-                bars:bars.map(bar=>({...bar})),text:[...text],plans:[...plans]};
+                bars:bars.map(bar=>({...bar})),text:[...text],plans:[...plans],rows};
+            const cardCapture=GLib.getenv('USAGESCOPE_UI_CARD_CAPTURE');
+            if(cardCapture)await new Promise(resolve=>{
+                const screenshot=new Shell.Screenshot();
+                const output=Gio.File.new_for_path(cardCapture).replace(null,false,Gio.FileCreateFlags.PRIVATE,null);
+                screenshot.screenshot_area(Math.floor(x),Math.floor(y),Math.ceil(actor.width),Math.ceil(actor.height),output,(_object,result)=>{
+                    try{screenshot.screenshot_area_finish(result);}finally{output.close(null);resolve();}
+                });
+            });
             const pause = milliseconds => new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT,milliseconds,()=>{resolve();return GLib.SOURCE_REMOVE;}));
             extension.indicator.button.menu.close();
             await pause(400);

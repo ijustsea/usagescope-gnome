@@ -23,7 +23,11 @@ input.on('line',line=>{
  if(r.method==='initialize') result={userAgent:'test'};
  if(r.method==='account/read') result={account:{type:'chatgpt',id:'fake-account'}};
  if(r.method==='account/rateLimits/read') result={accountId:'fake-account',rateLimits:{primary:{usedPercent:25,windowDurationMins:300,resetsAt:2000000000}},ordinaryUsageAllowed:true};
- if(r.method==='account/rateLimits/read' && mode==='compact-ui')result.rateLimits={planType:'plus',primary:{usedPercent:97,windowDurationMins:300,resetsAt:2000000000},secondary:{usedPercent:21,windowDurationMins:10080,resetsAt:2000000000}};
+ if(r.method==='account/rateLimits/read' && mode==='compact-ui'){
+  // Realistic resets relative to now, including the widest countdown (6d 23h).
+  const now=Math.floor(Date.now()/1000);
+  result.rateLimits={planType:'plus',primary:{usedPercent:97,windowDurationMins:300,resetsAt:now+4*3600+30*60+50},secondary:{usedPercent:21,windowDurationMins:10080,resetsAt:now+6*86400+23*3600+50*60}};
+ }
  if(r.method==='account/rateLimits/read' && mode==='switch-account') {
   quotaReads++;
   if(quotaReads===1)console.log(JSON.stringify({method:'account/updated',params:{authMode:'chatgpt'}}));

@@ -99,6 +99,21 @@ export interface QuotaRow {
     fraction: number;
     tone: 'codex' | 'claude' | 'danger' | 'muted';
     resetLabel: string;
+    /** Time left until the reset, e.g. '4h 30m'; empty when unknown or already reset. */
+    resetIn: string;
+}
+
+/** Rounds down, so at render time it never shows more than is left; open-menu renders are 30 s apart. */
+export function resetCountdown(resetsAt: number | null, now = Date.now()): string {
+    if (resetsAt === null) return '';
+    const left = resetsAt * 1000 - now;
+    if (!(left > 0)) return '';
+    const minutes = Math.floor(left / 60_000);
+    if (minutes < 1) return '<1m';
+    const days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60), rest = minutes % 60;
+    if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+    if (hours) return rest ? `${hours}h ${rest}m` : `${hours}h`;
+    return `${rest}m`;
 }
 
 /** A card has at most two real quota rows; no placeholders occupy extra height. */
@@ -119,6 +134,7 @@ export function quotaRows(view: ProviderView, now = Date.now()): QuotaRow[] {
             tone: expired ? 'muted' : remaining <= 30 ? 'danger' : view.snapshot!.provider,
             resetLabel: expired ? '새 확인 필요' : window.resetsAt === null ? ''
                 : new Date(window.resetsAt * 1000).toLocaleString([], {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' 초기화 예정',
+            resetIn: expired ? '' : resetCountdown(window.resetsAt, now),
         };
     });
 }

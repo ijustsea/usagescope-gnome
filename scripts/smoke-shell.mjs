@@ -81,8 +81,16 @@ try {
  if(!report.fast?.visible||report.fast.pollSeconds!==15||JSON.stringify(report.fast.checked)!=='["15초"]'||!report.fast.defaultChecked||JSON.stringify(report.fast.choices)!=='["15초","1분","3분","5분","15분","1시간"]'||!report.fast.stillOpen||!report.fast.controllersReplaced)throw new Error('Interval choices are clipped, not persisted, not highlighted or not applied to both controllers: '+JSON.stringify(report.fast));
  if(!report.fast.focus.owned||report.fast.focus.alpha<=0)throw new Error('Interval keyboard focus is not visible: '+JSON.stringify(report.fast.focus));
  if(JSON.stringify(report.plans)!==JSON.stringify(['Plus','Team'])||JSON.stringify(report.fast.plans)!==JSON.stringify(['Plus','Team']))throw new Error('Subscription badges must be simple tier names: '+JSON.stringify([report.plans,report.fast.plans]));
+ if(report.rows?.length!==4)throw new Error('Expected four quota rows: '+JSON.stringify(report.rows));
+ for(const row of report.rows){
+  const inside=row.labels.every(l=>l.x>=row.cardX-0.5&&l.x+l.width<=row.cardX+row.cardWidth+0.5);
+  const ordered=[...row.labels].sort((a,b)=>a.x-b.x).every((l,i,all)=>!i||l.x>=all[i-1].x+all[i-1].width-0.5);
+  if(!inside||!ordered||row.labels.some(l=>l.ellipsized))throw new Error('Quota row overflows, overlaps or is truncated: '+JSON.stringify(row));
+ }
+ const countdowns=report.rows.map(row=>row.labels.find(l=>l.text.startsWith('· '))?.text);
+ if(JSON.stringify(countdowns)!==JSON.stringify(['· 4h 30m 후','· 6d 23h 후','· 2h 10m 후','· 6d 23h 후']))throw new Error('Reset countdowns missing for ChatGPT/Claude: '+JSON.stringify(countdowns));
  if(report.text.some(t=>/Source:|Last local receipt:|Snapshot available/.test(t)))throw new Error('Diagnostics leaked into compact card');
- console.log('Real popup geometry '+Math.round(report.width)+'x'+Math.round(report.height)+'; four allocated colored quota bars; subscription labels '+report.plans.join('/')+'; expanded settings '+report.fast.expanded.upper+'/'+report.fast.expanded.page+'px');
+ console.log('Real popup geometry '+Math.round(report.width)+'x'+Math.round(report.height)+'; four allocated colored quota bars; subscription labels '+report.plans.join('/')+'; expanded settings '+report.fast.expanded.upper+'/'+report.fast.expanded.page+'px; countdowns '+countdowns.join(' ')+'; tightest row gap '+Math.min(...report.rows.map(row=>{const ls=[...row.labels].sort((a,b)=>a.x-b.x);return Math.round(ls[ls.length-1].x-(ls[ls.length-2].x+ls[ls.length-2].width));}))+'px');
  call('org.gnome.Shell.Extensions.DisableExtension',meta.uuid);
  call('org.gnome.Shell.Extensions.EnableExtension',meta.uuid);
  await sleep(300);

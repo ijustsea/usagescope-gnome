@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {LowQuotaAlerts, nextUiDeadline, plainText, receiptAge, quotaRows, cardStatus} from '../../build/ui/model.js';
+import {LowQuotaAlerts, nextUiDeadline, plainText, receiptAge, quotaRows, cardStatus, resetCountdown} from '../../build/ui/model.js';
 import {panelText} from '../../build/core/format.js';
 import {parseClaudeCliUsage} from '../../build/core/normalize.js';
 import {ProviderState} from '../../build/core/state.js';
@@ -165,4 +165,31 @@ test('UI clock is idle when disabled and schedules closed-panel freshness and ex
     const claude = {codex: {...sample(50, 0), snapshot: null}, claude: sample(50, 0, {provider: 'claude'})};
     claude.claude.snapshot.windows[0].resetsAt = null;
     assert.equal(nextUiDeadline(claude, {codex: false, claude: true}, false, now), now + 360_001);
+});
+
+test('reset countdown rounds down and never shows time after the reset', () => {
+    const at = seconds => now / 1000 + seconds;
+    assert.equal(resetCountdown(null, now), '');
+    assert.equal(resetCountdown(at(0), now), '');
+    assert.equal(resetCountdown(at(-60), now), '');
+    assert.equal(resetCountdown(at(59), now), '<1m');
+    assert.equal(resetCountdown(at(60), now), '1m');
+    assert.equal(resetCountdown(at(3599), now), '59m');
+    assert.equal(resetCountdown(at(3600), now), '1h');
+    assert.equal(resetCountdown(at(4 * 3600 + 30 * 60 + 59), now), '4h 30m');
+    assert.equal(resetCountdown(at(86400), now), '1d');
+    assert.equal(resetCountdown(at(3 * 86400 + 2 * 3600 + 59 * 60), now), '3d 2h');
+    assert.equal(resetCountdown(at(6 * 86400 + 23 * 3600 + 59 * 60), now), '6d 23h');
+});
+test('both providers expose the countdown on quota rows, but not for unknown or expired resets', () => {
+    for (const [provider, id] of [['codex', 'codex:primary'], ['claude', 'claude-cli:five_hour']]) {
+        const view = sample(60, 1, {provider});
+        view.snapshot.windows[0].id = id;
+        view.snapshot.windows[0].resetsAt = now / 1000 + 4 * 3600 + 30 * 60;
+        assert.equal(quotaRows(view, now)[0].resetIn, '4h 30m');
+        view.snapshot.windows[0].resetsAt = null;
+        assert.equal(quotaRows(view, now)[0].resetIn, '');
+        view.snapshot.windows[0].resetsAt = now / 1000;
+        assert.equal(quotaRows(view, now)[0].resetIn, '');
+    }
 });

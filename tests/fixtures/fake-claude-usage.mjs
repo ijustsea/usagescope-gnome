@@ -30,6 +30,11 @@ input.on('line',line=>{
  }else{
   if(!initialized||m.request.skip_behaviors!==true)throw Error('usage must skip transcript scanning');
   value={subscription_type:'team',session:{model_usage:{}},rate_limits_available:mode!=='unavailable',rate_limits:mode==='unavailable'?null:{five_hour:{utilization:0,resets_at:'2030-01-01T00:00:00.947265+00:00'},seven_day:{utilization:38,resets_at:null}}};
+  if(process.env.USAGESCOPE_TEST_MODE==='compact-ui'){
+   // Observed wire format (microseconds, numeric offset) with resets relative to now.
+   const iso=seconds=>new Date(Date.now()+seconds*1000).toISOString().replace(/\.(\d{3})Z$/,'.$1265+00:00');
+   value.rate_limits={five_hour:{utilization:0,resets_at:iso(2*3600+10*60+50)},seven_day:{utilization:38,resets_at:iso(6*86400+23*3600+50*60)}};
+  }
  }
  console.log(JSON.stringify({type:'control_response',response:{subtype:mode==='refused'?'error':'success',request_id:m.request_id,response:value}}));
 });
