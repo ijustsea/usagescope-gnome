@@ -31,8 +31,11 @@ export async function readClaudeCliUsage(executable:string,cancel:Gio.Cancellabl
  if(cancel.is_cancelled())throw new Error('CLI query cancelled');
  const launcher=new Gio.SubprocessLauncher({flags:Gio.SubprocessFlags.STDIN_PIPE|Gio.SubprocessFlags.STDOUT_PIPE|Gio.SubprocessFlags.STDERR_SILENCE});
  launcher.set_cwd('/');launcher.setenv('DISABLE_AUTOUPDATER','1',true);
- // Skip telemetry, error reporting and other non-essential CLI traffic on every poll.
- launcher.setenv('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC','1',true);
+ // Telemetry and error reporting off: no Datadog connection, ~27% less CPU per read (measured on 2.1.323).
+ launcher.setenv('DISABLE_TELEMETRY','1',true);launcher.setenv('DISABLE_ERROR_REPORTING','1',true);
+ // Never CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, even if the user sets it globally: it stops get_usage
+ // from asking the server, which then answers from a cache up to an hour old, or with no limits at all.
+ launcher.unsetenv('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC');
  const child=launcher.spawnv([trustedExecutable(executable),'-p','--input-format','stream-json','--output-format','stream-json','--verbose',
   '--no-session-persistence','--setting-sources','','--settings','{"disableAllHooks":true}',
   '--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--tools','','--disable-slash-commands','--no-chrome']);

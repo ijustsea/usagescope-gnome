@@ -7,7 +7,9 @@ for(const flag of ['--no-session-persistence','--strict-mcp-config','--disable-s
 for(const [flag,value]of [['--input-format','stream-json'],['--output-format','stream-json'],['--setting-sources',''],['--tools','']])if(args[args.indexOf(flag)+1]!==value)throw Error('unsafe fixture argument');
 if(JSON.parse(args[args.indexOf('--settings')+1]).disableAllHooks!==true)throw Error('hooks must be disabled');
 if(process.cwd()!=='/')throw Error('neutral working directory required');
-if(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC!=='1')throw Error('non-essential CLI traffic must be disabled');
+// Disabling all non-essential traffic stops the real CLI from fetching usage (stale or empty limits).
+if(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC!==undefined)throw Error('usage fetch must not be blocked as non-essential');
+if(process.env.DISABLE_TELEMETRY!=='1'||process.env.DISABLE_ERROR_REPORTING!=='1')throw Error('telemetry and error reporting must be off');
 if(process.env.USAGESCOPE_CLAUDE_TEST_PID)writeFileSync(process.env.USAGESCOPE_CLAUDE_TEST_PID,String(process.pid));
 const input=createInterface({input:process.stdin});
 input.on('close',()=>{if(mode==='stubborn')setInterval(()=>{},1000);});

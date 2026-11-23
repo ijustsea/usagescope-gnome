@@ -111,11 +111,13 @@ gsettings --schemadir "$SCHEMA" set org.gnome.shell.extensions.usagescope claude
 
 공식 CLI의 읽기 전용 `get_usage` 제어 요청으로 구독 등급과 5시간·7일 한도를 조회합니다. Team 계정과 Claude Code 2.1.323에서 실제 한도 응답을 확인했습니다. 다른 계정·버전·조직 정책에서 제공되지 않으면 `한도 정보 미제공` 또는 오류로 표시합니다. 초기값을 100%로 추정하지 않습니다.
 
-이 인터페이스는 공식 SDK에서 **실험용**으로 표시됩니다. UsageScope는 `initialize`와 `get_usage(skip_behaviors=true)`만 보내며, 모델 프롬프트·`/usage` 텍스트를 보내지 않습니다. CLI의 도구·MCP·훅·스킬·세션 저장을 끄고, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`로 텔레메트리·오류 보고 같은 비필수 통신도 끈 뒤 조회하고 프로세스를 종료합니다. 별도 서버나 Agent SDK 실행 의존성을 추가하지 않습니다. [검토한 공식 SDK 0.3.323](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk/v/0.3.323) · [Claude Code 환경 변수](https://code.claude.com/docs/en/env-vars)
+이 인터페이스는 공식 SDK에서 **실험용**으로 표시됩니다. UsageScope는 `initialize`와 `get_usage(skip_behaviors=true)`만 보내며, 모델 프롬프트·`/usage` 텍스트를 보내지 않습니다. CLI의 도구·MCP·훅·스킬·세션 저장과 텔레메트리·오류 보고(`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`)를 끈 뒤 조회하고 프로세스를 종료합니다. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`는 사용량 조회 자체를 막으므로 쓰지 않으며, 전역으로 설정돼 있어도 조회용 프로세스에서는 해제합니다. 별도 서버나 Agent SDK 실행 의존성을 추가하지 않습니다. [검토한 공식 SDK 0.3.323](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk/v/0.3.323) · [Claude Code 환경 변수](https://code.claude.com/docs/en/env-vars)
 
 ## Claude 사용량이 웹사이트와 다를 때
 
-UsageScope는 공식 Claude CLI가 보고하는 값을 그대로 표시합니다. 이 값은 Claude Code의 `/usage` 화면이 쓰는 것과 같은 `five_hour`·`seven_day` 필드입니다(Claude Code 2.1.323의 화면 코드에서 확인). 같은 계정·같은 시각에도 claude.ai **설정 → 사용량**의 퍼센트가 다를 수 있습니다. 실제로 초기화 시각은 같은데 CLI 16%·3%, 웹 48%·8%로 관측됐고, 비슷한 사례가 [Claude Code 이슈](https://github.com/anthropics/claude-code/issues/24335)에도 보고돼 있습니다. UsageScope는 브라우저 쿠키를 읽지 않으므로 웹사이트 수치를 대신 보여줄 수 없습니다. 웹 수치는 카드의 공식 홈페이지 버튼으로 확인하세요.
+UsageScope는 공식 Claude CLI가 claude.ai 사용량 서버에서 받은 `five_hour`·`seven_day` 값을 표시합니다. Claude Code의 `/usage` 화면과 같은 필드입니다. CLI는 받은 값을 60초 동안 재사용하고, 서버 요청이 실패하면 최대 1시간 전 값을 대신 돌려줍니다. 따라서 조회 간격과 이 캐시만큼 웹보다 늦을 수 있습니다.
+
+0.4.0–0.4.3은 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`를 설정해 CLI가 서버에 묻지 않게 만들었습니다. 그래서 웹보다 낮은 오래된 값이나 `한도 정보 미제공`이 나왔고, 0.4.4에서 고쳤습니다.
 
 ## 조회 간격
 
@@ -128,7 +130,7 @@ UsageScope는 공식 Claude CLI가 보고하는 값을 그대로 표시합니다
 - **토큰**: 모델 메시지를 보내지 않습니다. Codex는 `account/rateLimits/read`, Claude는 `get_usage`만 호출하며, Claude 응답의 세션 비용은 0·모델 사용 내역은 비어 있음을 확인했습니다.
 - **브라우저**: 자동으로 열거나 새로고침을 요구하지 않습니다. 카드의 공식 홈페이지 버튼을 누를 때만 공식 페이지를 엽니다.
 - **설정 파일**: Codex·Claude 설정을 바꾸지 않습니다. 다만 Claude CLI는 실행될 때마다 자체 캐시 파일 하나(`~/.claude/plugins/store/` 아래)를 갱신하는 것이 관측됐습니다. 이는 CLI 자체 동작입니다.
-- **프로세스**: 조회 때만 공식 CLI를 잠깐 실행하고 종료합니다. 조회 사이에 상주하는 CLI 프로세스는 없습니다. 이 개발 PC에서 1회 조회는 Claude 약 0.3–0.4초(최대 메모리 약 196MB), Codex 약 0.5초(약 112MB)였습니다. 환경마다 다르며 성능 보장은 아닙니다.
+- **프로세스**: 조회 때만 공식 CLI를 잠깐 실행하고 종료합니다. 조회 사이에 상주하는 CLI 프로세스는 없습니다. 이 개발 PC에서 1회 조회는 Claude 약 0.4초(CPU 약 0.7초), Codex 약 0.5초(CPU 약 0.3초)였습니다. 환경마다 다르며 성능 보장은 아닙니다.
 - **자리 비움**: 키보드·마우스 입력이 5분 동안 없으면(동영상 재생 중 포함) 조회를 멈추고 마지막 값을 유지합니다. 입력이 생기면 바로 한 번 조회하고 원래 간격으로 돌아갑니다. 화면을 잠그면 GNOME이 확장을 끄므로 조회하지 않습니다.
 - **Codex 플러그인 동기화**: 조회용 Codex 프로세스에만 플러그인·마켓플레이스 기능을 끕니다(`-c features.plugins=false -c features.remote_plugin=false`). 사용자 설정 파일은 바꾸지 않으며, 조회 1회의 CPU가 약 28% 줄었습니다. Codex 상태 DB·모델 캐시 갱신은 CLI 기본 동작으로 남습니다.
 
