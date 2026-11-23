@@ -5,7 +5,10 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 const repo=resolve(import.meta.dirname,'..');
 if(process.argv[2]!=='--inner') {
- const r=spawnSync('dbus-run-session',['--',process.execPath,import.meta.filename,'--inner'],{encoding:'utf8',timeout:90000,maxBuffer:1024*1024});
+ // The private bus activates xdg-document-portal and gvfs with its own environment; under the host XDG_RUNTIME_DIR they unmount and replace the host's /run/user/$UID/doc and gvfs mounts.
+ const runtime=await mkdtemp(join(tmpdir(),'usagescope-bus-'));
+ const r=spawnSync('dbus-run-session',['--',process.execPath,import.meta.filename,'--inner'],{env:{...process.env,XDG_RUNTIME_DIR:runtime},encoding:'utf8',timeout:90000,maxBuffer:1024*1024});
+ await rm(runtime,{recursive:true,force:true});
  if(r.error)throw r.error;
  if(r.status!==0)console.error(r.stderr.slice(-16000));
  console.log(r.stdout.trim());process.exit(r.status??1);
@@ -70,10 +73,13 @@ try {
  }
  if(report.cli?.status!=='ready'||report.cli?.plan!=='team'||report.cli.windows!==2||!report.cli.independentSource)throw new Error('Packaged Team CLI mode did not publish its independent quota: '+JSON.stringify(report.cli));
  const claudeMessages=(await readFile(env.USAGESCOPE_CLAUDE_TEST_TRACE,'utf8')).trim().split('\n').map(JSON.parse);
- if(claudeMessages.length!==2||claudeMessages.some(m=>m.type!=='control_request'||!['initialize','get_usage'].includes(m.request.subtype)))throw new Error('Claude mode sent more than read-only control requests');
+ if(claudeMessages.length!==4||claudeMessages.some(m=>m.type!=='control_request'||!['initialize','get_usage'].includes(m.request.subtype)))throw new Error('Claude mode/interval change sent more than the expected read-only control requests');
  if(!report.settings?.text.includes('Refresh')||!report.settings.text.includes('잔여 30% 이하 알림')||report.settings.pollSeconds!==60||!report.copyPreviewCorrect)throw new Error('Compact settings, default interval or safe command copy failed: '+JSON.stringify(report.settings));
  if(report.settings.y+report.settings.height>report.stageHeight+2||report.settings.text.some(t=>t.includes('gjs -m ')))throw new Error('Settings overflow or embedded long commands remain');
  if(report.settings.controls.length!==3||report.settings.controls.some(c=>c.y<report.settings.y||c.y+c.height>report.settings.y+report.settings.height+1))throw new Error('Primary settings controls are clipped: '+JSON.stringify(report.settings.controls));
+ if(!report.fast?.visible||report.fast.pollSeconds!==15||report.fast.label!=='CLI 조회 15초'||!report.fast.choices.includes('1분 (기본)')||!report.fast.controllersReplaced)throw new Error('15-second choice is clipped, not persisted or not applied to both controllers: '+JSON.stringify(report.fast));
+ if(!report.fast.focus.owned||report.fast.focus.alpha<=0)throw new Error('Disclosure keyboard focus is not visible: '+JSON.stringify(report.fast.focus));
+ if(JSON.stringify(report.plans)!==JSON.stringify(['Plus','Pro'])||JSON.stringify(report.fast.plans)!==JSON.stringify(['Plus','Team']))throw new Error('Subscription badges must be simple tier names: '+JSON.stringify([report.plans,report.fast.plans]));
  if(report.text.some(t=>/Source:|Last local receipt:|Snapshot available/.test(t)))throw new Error('Diagnostics leaked into compact card');
  console.log('Real popup geometry '+Math.round(report.width)+'x'+Math.round(report.height)+'; four allocated colored quota bars; subscription labels '+report.text.filter(t=>t==='Plus'||t==='Pro').join('/'));
  call('org.gnome.Shell.Extensions.DisableExtension',meta.uuid);
@@ -81,7 +87,7 @@ try {
  await sleep(300);
  const after=call('org.gnome.Shell.Extensions.GetExtensionErrors',meta.uuid);
  if(!/\(\[\]|@as \[\]/.test(after))throw new Error('Re-enable errors: '+after);
- console.log('Isolated GNOME Shell smoke passed: passive→Team CLI mode, control-only requests, 60s default, clipboard, compact settings, closed-menu refresh and enable/disable/re-enable.');
+ console.log('Isolated GNOME Shell smoke passed: passive→Team CLI mode, 60s default/15s choice, Plus/Pro/Team badges, clipboard, compact settings, closed-menu refresh and lifecycle.');
 } catch(e){console.error(log);throw e;}
 finally {
  shell.kill('SIGTERM');await Promise.race([new Promise(r=>shell.once('exit',r)),sleep(3000)]);

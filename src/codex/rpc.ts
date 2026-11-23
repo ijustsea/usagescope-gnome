@@ -79,7 +79,7 @@ export class RpcClient {
   return this.raw(method,params);
  }
  private async initialize():Promise<void> {
-  await this.raw('initialize',{clientInfo:{name:'usagescope_gnome',title:'UsageScope',version:'0.3.0'}});
+  await this.raw('initialize',{clientInfo:{name:'usagescope_gnome',title:'UsageScope',version:'0.3.1'}});
   await this.send({method:'initialized',params:{}});
  }
  private raw(method:string,params:unknown):Promise<unknown> {

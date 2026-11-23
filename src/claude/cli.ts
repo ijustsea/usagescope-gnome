@@ -3,6 +3,7 @@ import GLib from 'gi://GLib';
 import {trustedExecutable} from '../runtime/executable.js';
 import {parseClaudeCliUsage} from '../core/normalize.js';
 import {ProviderState} from '../core/state.js';
+import {normalPollSeconds} from '../core/polling.js';
 import type {Publish,UsageSnapshot} from '../core/types.js';
 
 function record(value:unknown):Record<string,unknown>{
@@ -111,7 +112,7 @@ export class ClaudeCliController{
    if(generation!==this.generation)return;
    this.pending=null;this.cancel=null;
    if(!this.active)return;
-   const seconds=this.failures?Math.min(900,30*2**Math.min(5,this.failures-1)):Math.max(60,Math.min(3600,this.options.pollSeconds));
+   const seconds=this.failures?Math.min(900,30*2**Math.min(5,this.failures-1)):normalPollSeconds(this.options.pollSeconds);
    this.timer=GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT,seconds,()=>{this.timer=0;void this.refresh();return GLib.SOURCE_REMOVE;});
   });
   return this.pending;

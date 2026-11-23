@@ -27,7 +27,7 @@
       <description>Leave empty for PATH or the native ~/.local/bin/claude location. Absolute paths only, no arguments.</description>
     </key>
     <key name="poll-seconds" type="i">
-      <range min="60" max="3600"/>
+      <range min="15" max="3600"/>
       <default>60</default>
       <summary>CLI polling interval in seconds</summary>
       <description>Codex and opt-in Claude CLI reads share this interval. Passive Claude statusline monitoring does not poll.</description>

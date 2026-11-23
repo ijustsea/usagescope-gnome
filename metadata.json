@@ -6,6 +6,6 @@
     "51"
   ],
   "settings-schema": "org.gnome.shell.extensions.usagescope",
-  "version": 4,
+  "version": 5,
   "url": "https://github.com/ijustsea/usagescope-gnome"
 }

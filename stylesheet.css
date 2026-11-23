@@ -21,3 +21,6 @@
 .usagescope-link:hover, .usagescope-link:focus { background-color: rgba(128, 128, 128, 0.2); }
 .usagescope-note { max-width: 300px; font-size: 11px; color: #9a9996; }
 .usagescope-path { width: 280px; }
+.usagescope-disclosure { border: 1px solid transparent; border-radius: 4px; }
+.usagescope-disclosure:hover { background-color: rgba(128, 128, 128, 0.2); }
+.usagescope-disclosure:focus { background-color: rgba(128, 128, 128, 0.2); border-color: #99c1f1; }

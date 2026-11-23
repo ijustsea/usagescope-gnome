@@ -3,6 +3,7 @@ import {RpcClient,RpcError} from './rpc.js';
 import {parseCodexUsage} from '../core/normalize.js';
 import {validateAuthUrl} from '../core/policy.js';
 import {ProviderState} from '../core/state.js';
+import {normalPollSeconds} from '../core/polling.js';
 import type {Publish} from '../core/types.js';
 interface Options {executable:string;pollSeconds:number;publish:Publish;openUri:(uri:string)=>void;}
 export class CodexController {
@@ -68,7 +69,7 @@ export class CodexController {
  }
  private schedule():void {
   if(this.timer){GLib.Source.remove(this.timer);this.timer=0;}
-  const delay=this.failures?Math.min(900,30*2**Math.min(this.failures-1,5))+Math.floor(Math.random()*10):Math.max(60,Math.min(3600,this.options.pollSeconds));
+  const delay=this.failures?Math.min(900,30*2**Math.min(this.failures-1,5))+Math.floor(Math.random()*10):normalPollSeconds(this.options.pollSeconds);
   this.timer=GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT,delay,()=>{this.timer=0;void this.refresh();return GLib.SOURCE_REMOVE;});
  }
  async connect():Promise<void> {

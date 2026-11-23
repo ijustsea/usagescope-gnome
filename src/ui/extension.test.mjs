@@ -11,8 +11,8 @@ const emitted = stripTypeScriptTypes(readFileSync(new URL('../extension.ts', imp
     .replace(/^import .*;$/gm, '').replace('export default class', 'return class');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness() {
-    const h = {timers: new Set(), codex: [], claude: [], launches: [], sourceIds: ['a'.repeat(64), 'b'.repeat(64)]};
-    const values = {'enable-codex': false, 'enable-claude': false, 'codex-path': '', 'poll-seconds': 180};
+    const h = {timers: new Set(), codex: [], claude: [], claudeCli: [], launches: [], sourceIds: ['a'.repeat(64), 'b'.repeat(64)]};
+    const values = {'enable-codex': false, 'enable-claude': false, 'codex-path': '', 'claude-path': '', 'claude-cli-mode': false, 'poll-seconds': 60};
     const settings = {
         connect(_signal, callback) {this.changed = callback; return 1;},
         disconnect() {this.changed = null;},
@@ -52,18 +52,25 @@ function harness() {
         listSources() {return h.sourceIds;}
         stop() {this.stopped = true;}
     }
+    class ClaudeCli {
+        constructor(options) {this.options = options; h.claudeCli.push(this);}
+        start() {this.options.publish({status:'ready',snapshot:null,message:'CLI quota read'});}
+        async refresh() {}
+        stop() {this.stopped = true;}
+    }
     class Cancellable {cancel() {this.canceled = true;} is_cancelled() {return !!this.canceled;}}
     class Alerts {clear() {} observe() {return [];}}
     const GLib = {PRIORITY_DEFAULT: 0, SOURCE_REMOVE: false, SOURCE_CONTINUE: true,
-        FileTest: {IS_REGULAR: 1}, find_program_in_path: () => '/fake/codex', file_test: () => true,
+        FileTest: {IS_REGULAR: 1}, find_program_in_path: name => '/fake/'+name, file_test: () => true,
+        get_home_dir: () => '/fake/home', build_filenamev: parts => parts.join('/'),
         timeout_add() {h.timers.add(1); return 1;}, Source: {remove(id) {h.timers.delete(id);}}};
     const Gio = {Cancellable, AppInfo: {
         launch_default_for_uri_async(uri) {h.launches.push(uri);}, launch_default_for_uri_finish() {},
     }};
     const Main = {panel: {addToStatusArea() {}}, messageTray: {add() {}}};
     const Extension = new Function('Gio', 'GLib', 'Extension', 'Main', 'MessageTray', 'CodexController',
-        'ClaudeController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', 'websiteUrl', emitted)(
-        Gio, GLib, Base, Main, {}, Codex, Claude, Indicator, Alerts, nextUiDeadline, value => value, websiteUrl);
+        'ClaudeController', 'ClaudeCliController', 'UsageIndicator', 'LowQuotaAlerts', 'nextUiDeadline', 'plainText', 'websiteUrl', emitted)(
+        Gio, GLib, Base, Main, {}, Codex, Claude, ClaudeCli, Indicator, Alerts, nextUiDeadline, value => value, websiteUrl);
     h.extension = new Extension();
     h.extension.enable();
     return h;
@@ -144,4 +151,26 @@ test('Claude selection passes the full hash; changing Codex settings preserves C
     assert.equal(h.claude.length, 1);
     assert.equal(h.claude[0].stopped, undefined);
     h.extension.disable();
+});
+
+test('15-second selection restarts active CLI providers and ignores retired publications',()=>{
+ const h=harness();h.actions.setEnabled('codex',true);h.actions.setEnabled('claude',true);
+ h.actions.setClaudeCliMode(true);
+ assert.equal(h.claude[0].stopped,true);assert.equal(h.state.views.claude.message,'CLI quota read');
+ const oldCodex=h.codex[0],oldClaude=h.claudeCli[0];
+ h.actions.setPollSeconds(15);
+ assert.equal(oldCodex.stopped,true);assert.equal(oldClaude.stopped,true);
+ assert.equal(h.codex[1].options.pollSeconds,15);assert.equal(h.claudeCli[1].options.pollSeconds,15);
+ const state=h.state;oldClaude.options.publish({status:'error',snapshot:null,message:'retired'});
+ assert.equal(h.state,state);
+ h.actions.selectClaudeSource('a'.repeat(64));assert.equal(h.state,state);
+ h.extension.disable();assert.equal(h.claudeCli[1].stopped,true);
+});
+test('interval and mode preferences acquire nothing until monitoring is enabled',()=>{
+ const h=harness();h.actions.setPollSeconds(15);h.actions.setClaudeCliMode(true);
+ assert.equal(h.codex.length,0);assert.equal(h.claude.length,0);assert.equal(h.claudeCli.length,0);
+ h.actions.setEnabled('claude',true);
+ assert.equal(h.claudeCli[0].options.pollSeconds,15);assert.equal(h.codex.length,0);
+ h.actions.setClaudeCliMode(false);assert.equal(h.claudeCli[0].stopped,true);assert.equal(h.claude.length,1);
+ h.extension.disable();
 });
