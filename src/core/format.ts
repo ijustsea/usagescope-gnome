@@ -5,11 +5,16 @@ export function formatWindow(w:QuotaWindow,now=Date.now()):string {
  const reset=w.resetsAt==null?'초기화 시각 미확인':new Date(w.resetsAt*1000).toLocaleString();
  return w.label+' 잔여 '+Math.round(100-w.usedPercent)+'% · '+reset;
 }
+/** Earlier values are marked only for a failed read or data over six minutes old. A read in
+ * progress keeps showing the last value as current, so the panel does not shift on every poll. */
+export function isHistorical(view:ProviderView,now=Date.now()):boolean {
+ if(!view.snapshot) return false;
+ return (view.status!=='ready'&&view.status!=='loading')||now-view.snapshot.receivedAt>360000;
+}
 export function panelText(view:ProviderView,now=Date.now()):string {
  if(view.status==='disabled') return '꺼짐';
  if(!view.snapshot) return view.status==='auth-required'?'로그인':'—';
  const windows=view.snapshot.windows.filter(w=>!isExpired(w,now));
  if(!windows.length) return '확인 필요';
- const historical=view.status!=='ready'||now-view.snapshot.receivedAt>360000;
- return (historical?'~':'')+windows.slice(0,2).map(w=>w.label+' '+Math.round(100-w.usedPercent)+'%').join(' / ');
+ return (isHistorical(view,now)?'~':'')+windows.slice(0,2).map(w=>w.label+' '+Math.round(100-w.usedPercent)+'%').join(' / ');
 }

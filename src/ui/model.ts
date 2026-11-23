@@ -147,7 +147,9 @@ export function cardStatus(view: ProviderView, now = Date.now()): string {
         if (view.status === 'error') return '조회 실패 · CLI 로그인 확인';
         return view.status === 'loading' ? '확인 중…' : '조회 대기';
     }
-    if ((view.status === 'ready' || view.status === 'waiting') && !view.snapshot.windows.length)
+    // A read in progress reports the same text as the value it is refreshing.
+    const current = view.status === 'ready' || view.status === 'loading';
+    if ((current || view.status === 'waiting') && !view.snapshot.windows.length)
         return '한도 정보 미제공';
     const age = receiptAge(view.snapshot.receivedAt, now);
     const translated = age === 'just now' ? '방금'
@@ -155,6 +157,6 @@ export function cardStatus(view: ProviderView, now = Date.now()): string {
     // Retained history must not hide that the CLI has since been signed out.
     if (view.status === 'auth-required') return 'CLI 로그인 필요 · ' + translated;
     if (view.snapshot.provider === 'codex' && view.snapshot.allowed === false)
-        return (view.status === 'ready' ? '사용 제한 · ' : '이전 제한 보고 · ') + translated;
-    return (view.status === 'ready' ? '업데이트 · ' : '이전 조회 · ') + translated;
+        return (current ? '사용 제한 · ' : '이전 제한 보고 · ') + translated;
+    return (current ? '업데이트 · ' : '이전 조회 · ') + translated;
 }

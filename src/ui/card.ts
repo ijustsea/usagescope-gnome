@@ -5,6 +5,7 @@ import St from 'gi://St';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import type {ProviderId, ProviderView} from '../core/types.js';
 import {planName} from '../core/subscription.js';
+import {isHistorical} from '../core/format.js';
 import {cardStatus, plainText, quotaRows, type QuotaRow} from './model.js';
 
 function label(text = '', style = ''): St.Label {
@@ -109,7 +110,6 @@ export class ProviderCard {
         text(this.status, cardStatus(view, now));
         const rows = quotaRows(view, now);
         for (let index = 0; index < this.bars.length; index++) this.bars[index]!.update(rows[index]);
-        const historical = view.status !== 'ready' || (view.snapshot && now - view.snapshot.receivedAt > 360_000);
-        this.body.opacity = historical && view.snapshot ? 185 : 255;
+        this.body.opacity = isHistorical(view, now) ? 185 : 255;
     }
 }

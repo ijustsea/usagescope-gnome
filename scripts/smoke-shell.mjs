@@ -71,7 +71,8 @@ try {
  }
  if(report.cli?.status!=='ready'||report.cli?.plan!=='team'||report.cli.windows!==2||!report.cli.independentSource)throw new Error('Packaged Claude CLI read did not publish its quota: '+JSON.stringify(report.cli));
  const claudeMessages=(await readFile(env.USAGESCOPE_CLAUDE_TEST_TRACE,'utf8')).trim().split('\n').map(JSON.parse);
- if(claudeMessages.length!==4||claudeMessages.some(m=>m.type!=='control_request'||!['initialize','get_usage'].includes(m.request.subtype)))throw new Error('Claude start/interval change sent more than the expected read-only control requests');
+ // Three reads: start, the probe's refresh and the interval change, each initialize + get_usage only.
+ if(claudeMessages.length!==6||claudeMessages.some(m=>m.type!=='control_request'||!['initialize','get_usage'].includes(m.request.subtype)))throw new Error('Claude start/refresh/interval change sent other than the expected read-only control requests: '+claudeMessages.length);
  if(!report.settings?.text.includes('Refresh')||!report.settings.text.includes('잔여 30% 이하 알림')||report.settings.pollSeconds!==60)throw new Error('Compact settings or default interval failed: '+JSON.stringify(report.settings));
  const retired=['CLI 연결 및 설정','Claude 상태줄 연결','Codex CLI 로그인 연결…','Claude CLI 조회 (실험)','Claude 세션 선택'];
  if(report.settings.text.some(t=>retired.some(r=>t.startsWith(r))))throw new Error('Retired connection/setup controls are still shown: '+JSON.stringify(report.settings.text));
@@ -81,6 +82,7 @@ try {
  if(!report.fast?.visible||report.fast.pollSeconds!==15||JSON.stringify(report.fast.checked)!=='["15초"]'||!report.fast.defaultChecked||JSON.stringify(report.fast.choices)!=='["15초","1분","5분"]'||!report.fast.stillOpen||!report.fast.controllersReplaced)throw new Error('Interval choices are clipped, not persisted, not highlighted or not applied to both controllers: '+JSON.stringify(report.fast));
  if(!report.fast.focus.owned||report.fast.focus.alpha<=0)throw new Error('Interval keyboard focus is not visible: '+JSON.stringify(report.fast.focus));
  if(JSON.stringify(report.plans)!==JSON.stringify(['Plus','Team'])||JSON.stringify(report.fast.plans)!==JSON.stringify(['Plus','Team']))throw new Error('Subscription badges must be simple tier names: '+JSON.stringify([report.plans,report.fast.plans]));
+ if(!report.refreshPanel?.sawLoading||report.refreshPanel.texts.length!==1||report.refreshPanel.texts[0].includes('~'))throw new Error('Top-bar text changed during a refresh: '+JSON.stringify(report.refreshPanel));
  if(report.rows?.length!==4)throw new Error('Expected four quota rows: '+JSON.stringify(report.rows));
  for(const row of report.rows){
   const inside=row.labels.every(l=>l.x>=row.cardX-0.5&&l.x+l.width<=row.cardX+row.cardWidth+0.5);
@@ -91,6 +93,7 @@ try {
  if(JSON.stringify(countdowns)!==JSON.stringify(['· 4h 30m 후','· 6d 23h 후','· 2h 10m 후','· 6d 23h 후']))throw new Error('Reset countdowns missing for ChatGPT/Claude: '+JSON.stringify(countdowns));
  if(report.text.filter(t=>t==='공식 홈페이지 ↗').length!==2||report.text.some(t=>t.includes('로그인 / 가입')))throw new Error('Cards must link to the official homepages: '+JSON.stringify(report.text));
  if(report.text.some(t=>/Source:|Last local receipt:|Snapshot available/.test(t)))throw new Error('Diagnostics leaked into compact card');
+ console.log('Top bar steady through a refresh: '+report.refreshPanel.texts[0]);
  console.log('Real popup geometry '+Math.round(report.width)+'x'+Math.round(report.height)+'; four allocated colored quota bars; subscription labels '+report.plans.join('/')+'; expanded settings '+report.fast.expanded.upper+'/'+report.fast.expanded.page+'px; countdowns '+countdowns.join(' ')+'; tightest row gap '+Math.min(...report.rows.map(row=>{const ls=[...row.labels].sort((a,b)=>a.x-b.x);return Math.round(ls[ls.length-1].x-(ls[ls.length-2].x+ls[ls.length-2].width));}))+'px');
  call('org.gnome.Shell.Extensions.DisableExtension',meta.uuid);
  call('org.gnome.Shell.Extensions.EnableExtension',meta.uuid);
